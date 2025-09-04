@@ -1,0 +1,47 @@
+{
+  "name": "child-vaccination-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Child Vaccination Tracking App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "seed": "node seeds/seedVaccines.js",
+    "seed:users": "node seeds/seedUsers.js",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^7.5.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.0.0",
+    "express-rate-limit": "^6.10.0",
+    "multer": "^1.4.5-lts.1",
+    "winston": "^3.10.0",
+    "moment": "^2.29.4",
+    "node-cron": "^3.0.2",
+    "nodemailer": "^6.9.4",
+    "twilio": "^4.14.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "jest": "^29.6.2",
+    "supertest": "^6.3.3"
+  },
+  "keywords": [
+    "vaccination",
+    "healthcare",
+    "children",
+    "api",
+    "nodejs",
+    "express",
+    "mongodb"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
