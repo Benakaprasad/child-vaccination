@@ -756,4 +756,669 @@ class EmailService {
             <p>If you're having trouble with the password reset process or have any security concerns, please contact our support team immediately.</p>
 
             <div style="background-color: #F3E5F5; padding: 15px; border-radius: 4px; margin: 20px 0;">
-                <h4>📞 Need Help?</h
+                <h4>📞 Need Help?</h4>
+                <p><strong>Support Team:</strong><br>
+                📞 Phone: {{supportPhone}}<br>
+                📧 Email: {{supportEmail}}<br>
+                🕐 Available: Monday - Friday, 9 AM - 5 PM</p>
+            </div>
+
+            <p>Thank you for using our Vaccination Tracking System to keep your family healthy and protected.</p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2024 Vaccination Tracking System. All rights reserved.</p>
+            <p>This password reset email was sent to {{email}} on {{date}}.</p>
+            <p>For security reasons, please do not share this email with anyone.</p>
+        </div>
+    </div>
+</body>
+</html>`,
+
+      'appointment-confirmation.html': `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Appointment Confirmation</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            line-height: 1.6; 
+            color: #333; 
+            margin: 0; 
+            padding: 0; 
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            padding: 20px; 
+        }
+        .header { 
+            background-color: #9C27B0; 
+            color: white; 
+            padding: 20px; 
+            text-align: center; 
+            border-radius: 8px 8px 0 0;
+        }
+        .content { 
+            padding: 20px; 
+            background-color: #f9f9f9; 
+            border: 1px solid #ddd;
+        }
+        .footer { 
+            padding: 20px; 
+            text-align: center; 
+            font-size: 12px; 
+            color: #666; 
+            background-color: #f1f1f1;
+            border-radius: 0 0 8px 8px;
+        }
+        .appointment-details {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #9C27B0;
+            margin: 20px 0;
+        }
+        .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background-color: #9C27B0; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 4px; 
+            margin: 10px 5px;
+        }
+        .calendar-info {
+            background-color: #F3E5F5;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📅 Appointment Confirmed!</h1>
+        </div>
+        <div class="content">
+            <h2>Hello {{userName}}!</h2>
+            
+            <p>Your vaccination appointment has been successfully confirmed. Please save this email for your records.</p>
+
+            <div class="appointment-details">
+                <h3>📋 Appointment Details</h3>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">Patient:</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;">{{childName}}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">Vaccine:</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;">{{vaccineName}}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">Date:</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>{{appointmentDate}}</strong></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">Time:</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>{{appointmentTime}}</strong></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">Provider:</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #eee;">{{doctorName}}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px; font-weight: bold;">Location:</td>
+                        <td style="padding: 10px;">{{clinicName}}<br>{{clinicAddress}}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <div class="calendar-info">
+                <h4>📱 Add to Your Calendar</h4>
+                <p>Don't forget your appointment! Add it to your calendar to get automatic reminders.</p>
+                <div style="text-align: center;">
+                    <a href="{{googleCalendarUrl}}" class="button">Add to Google Calendar</a>
+                    <a href="{{icsFileUrl}}" class="button">Download .ics File</a>
+                </div>
+            </div>
+
+            <div style="background-color: #E8F5E8; padding: 15px; border-radius: 4px; margin: 20px 0;">
+                <h4>✅ Before Your Appointment:</h4>
+                <ul>
+                    <li>Arrive 15 minutes early for check-in</li>
+                    <li>Bring your child's vaccination record/card</li>
+                    <li>Bring your insurance card and ID</li>
+                    <li>List any current medications your child is taking</li>
+                    <li>Note any recent illness or fever</li>
+                    <li>Prepare any questions for the healthcare provider</li>
+                </ul>
+            </div>
+
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{{rescheduleUrl}}" class="button">Need to Reschedule?</a>
+                <a href="{{cancelUrl}}" class="button" style="background-color: #757575;">Cancel Appointment</a>
+            </div>
+
+            <div style="background-color: white; padding: 15px; border-radius: 4px; margin: 20px 0;">
+                <h4>📞 Contact Information:</h4>
+                <p><strong>{{clinicName}}</strong><br>
+                📍 {{clinicAddress}}<br>
+                📞 Phone: {{clinicPhone}}<br>
+                🕐 Hours: {{clinicHours}}</p>
+            </div>
+        </div>
+        <div class="footer">
+            <p>&copy; 2024 Vaccination Tracking System. All rights reserved.</p>
+            <p>Confirmation sent to {{email}} on {{date}}</p>
+        </div>
+    </div>
+</body>
+</html>`,
+
+      'default-notification.html': `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{{notificationTitle}}</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            line-height: 1.6; 
+            color: #333; 
+            margin: 0; 
+            padding: 0; 
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            padding: 20px; 
+        }
+        .header { 
+            background-color: #607D8B; 
+            color: white; 
+            padding: 20px; 
+            text-align: center; 
+            border-radius: 8px 8px 0 0;
+        }
+        .content { 
+            padding: 20px; 
+            background-color: #f9f9f9; 
+            border: 1px solid #ddd;
+        }
+        .footer { 
+            padding: 20px; 
+            text-align: center; 
+            font-size: 12px; 
+            color: #666; 
+            background-color: #f1f1f1;
+            border-radius: 0 0 8px 8px;
+        }
+        .message-box {
+            background-color: white;
+            padding: 20px;
+            border-radius: 4px;
+            margin: 15px 0;
+            border-left: 4px solid #607D8B;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📧 {{notificationTitle}}</h1>
+        </div>
+        <div class="content">
+            <h2>Hello {{userName}}!</h2>
+            
+            <div class="message-box">
+                <p>{{message}}</p>
+            </div>
+
+            <p>If you have any questions or need assistance, please don't hesitate to contact our support team.</p>
+
+            <div style="background-color: white; padding: 15px; border-radius: 4px; margin: 20px 0;">
+                <h4>📞 Contact Support:</h4>
+                <p>📞 Phone: {{supportPhone}}<br>
+                📧 Email: {{supportEmail}}</p>
+            </div>
+        </div>
+        <div class="footer">
+            <p>&copy; 2024 Vaccination Tracking System. All rights reserved.</p>
+            <p>This notification was sent to {{email}} on {{date}}</p>
+        </div>
+    </div>
+</body>
+</html>`
+    };
+
+    // Write template files
+    for (const [filename, content] of Object.entries(templates)) {
+      const filePath = path.join(templatesDir, filename);
+      await fs.writeFile(filePath, content, 'utf-8');
+    }
+
+    logger.info('Default email templates created');
+  }
+
+  /**
+   * Create basic templates in memory as fallback
+   */
+  createBasicTemplates() {
+    const basicTemplates = {
+      'welcome': `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h1 style="color: #4CAF50;">Welcome {{userName}}!</h1>
+          <p>Welcome to our vaccination tracking system.</p>
+          <p>Your account has been created with email: {{email}}</p>
+        </div>
+      `,
+      'vaccination-reminder': `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h1 style="color: #2196F3;">Vaccination Reminder</h1>
+          <h2>Hello {{userName}}!</h2>
+          <div style="background-color: #E3F2FD; padding: 15px; border-left: 4px solid #2196F3;">
+            <p><strong>{{notificationTitle}}</strong></p>
+            <p>{{message}}</p>
+          </div>
+        </div>
+      `,
+      'vaccination-overdue': `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h1 style="color: #FF5722;">⚠️ Overdue Vaccination Alert</h1>
+          <h2>Hello {{userName}}!</h2>
+          <div style="background-color: #FFEBEE; padding: 15px; border-left: 4px solid #FF5722;">
+            <p><strong>{{notificationTitle}}</strong></p>
+            <p>{{message}}</p>
+          </div>
+          <p><strong>Please schedule an appointment as soon as possible.</strong></p>
+        </div>
+      `,
+      'vaccination-completed': `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h1 style="color: #4CAF50;">✅ Vaccination Completed</h1>
+          <h2>Hello {{userName}}!</h2>
+          <div style="background-color: #E8F5E8; padding: 15px; border-left: 4px solid #4CAF50;">
+            <p><strong>{{notificationTitle}}</strong></p>
+            <p>{{message}}</p>
+          </div>
+          <p>Thank you for keeping your child's vaccinations up to date!</p>
+        </div>
+      `,
+      'password-reset': `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h1 style="color: #FF9800;">🔐 Password Reset Request</h1>
+          <h2>Hello {{userName}}!</h2>
+          <p>We received a request to reset your password.</p>
+          <div style="text-align: center; margin: 20px 0;">
+            <a href="{{resetLink}}" style="background-color: #FF9800; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px;">Reset Password</a>
+          </div>
+          <p>This link will expire in {{expirationTime}}.</p>
+        </div>
+      `,
+      'default-notification': `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h1>{{notificationTitle}}</h1>
+          <h2>Hello {{userName}}!</h2>
+          <p>{{message}}</p>
+        </div>
+      `
+    };
+
+    for (const [name, template] of Object.entries(basicTemplates)) {
+      this.templates.set(name, template);
+    }
+
+    logger.info('Basic email templates loaded in memory');
+  }
+
+  /**
+   * Send email
+   * @param {Object} options - Email options
+   * @returns {Object} Send result
+   */
+  async sendEmail(options) {
+    try {
+      const { to, subject, template, data, html, text, attachments } = options;
+
+      if (!to || !subject) {
+        throw new Error('Email recipient and subject are required');
+      }
+
+      // Validate email address
+      if (!this.isValidEmail(to)) {
+        throw new Error('Invalid email address');
+      }
+
+      let emailHtml = html;
+      let emailText = text;
+
+      // Use template if provided
+      if (template && this.templates.has(template)) {
+        emailHtml = this.renderTemplate(template, data || {});
+        emailText = this.stripHtml(emailHtml);
+      }
+
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || 'Vaccination Tracking System',
+          address: process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER
+        },
+        to,
+        subject,
+        html: emailHtml,
+        text: emailText
+      };
+
+      // Add attachments if provided
+      if (attachments) {
+        mailOptions.attachments = attachments;
+      }
+
+      const result = await this.transporter.sendMail(mailOptions);
+      
+      logger.info(`Email sent successfully to ${to}: ${subject}`);
+      
+      return {
+        success: true,
+        messageId: result.messageId,
+        recipient: to,
+        subject
+      };
+
+    } catch (error) {
+      logger.error('Failed to send email:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send bulk emails
+   * @param {Array} emails - Array of email options
+   * @returns {Array} Send results
+   */
+  async sendBulkEmails(emails) {
+    const results = [];
+    const batchSize = 10; // Send in batches to avoid overwhelming the server
+
+    for (let i = 0; i < emails.length; i += batchSize) {
+      const batch = emails.slice(i, i + batchSize);
+      const batchPromises = batch.map(async (emailOptions) => {
+        try {
+          const result = await this.sendEmail(emailOptions);
+          return { success: true, result, email: emailOptions.to };
+        } catch (error) {
+          logger.error(`Failed to send bulk email to ${emailOptions.to}:`, error);
+          return { 
+            success: false, 
+            error: error.message, 
+            email: emailOptions.to 
+          };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Add delay between batches to respect rate limits
+      if (i + batchSize < emails.length) {
+        await this.sleep(1000); // 1 second delay
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    logger.info(`Bulk email send completed: ${successCount}/${emails.length} successful`);
+
+    return results;
+  }
+
+  /**
+   * Render email template with data
+   * @param {String} templateName - Template name
+   * @param {Object} data - Template data
+   * @returns {String} Rendered template
+   */
+  renderTemplate(templateName, data) {
+    if (!this.templates.has(templateName)) {
+      logger.warn(`Template '${templateName}' not found, using default`);
+      templateName = 'default-notification';
+    }
+
+    let template = this.templates.get(templateName);
+
+    // Set default values
+    const templateData = {
+      userName: 'User',
+      email: '',
+      date: formatDate(new Date(), 'MMMM Do, YYYY'),
+      supportPhone: process.env.SUPPORT_PHONE || '+1-800-VACCINE',
+      supportEmail: process.env.SUPPORT_EMAIL || 'support@vaccination-tracking.com',
+      loginUrl: `${process.env.FRONTEND_URL}/login`,
+      preferencesUrl: `${process.env.FRONTEND_URL}/preferences`,
+      ...data
+    };
+
+    // Replace template variables
+    for (const [key, value] of Object.entries(templateData)) {
+      const regex = new RegExp(`{{${key}}}`, 'g');
+      template = template.replace(regex, value || '');
+    }
+
+    // Clean up any remaining template variables
+    template = template.replace(/{{[^}]+}}/g, '');
+
+    return template;
+  }
+
+  /**
+   * Strip HTML tags from text
+   * @param {String} html - HTML string
+   * @returns {String} Plain text
+   */
+  stripHtml(html) {
+    return html
+      .replace(/<[^>]*>/g, '') // Remove HTML tags
+      .replace(/&nbsp;/g, ' ') // Replace &nbsp; with space
+      .replace(/&amp;/g, '&') // Replace &amp; with &
+      .replace(/&lt;/g, '<') // Replace &lt; with <
+      .replace(/&gt;/g, '>') // Replace &gt; with >
+      .replace(/&quot;/g, '"') // Replace &quot; with "
+      .replace(/&#39;/g, "'") // Replace &#39; with '
+      .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+      .trim();
+  }
+
+  /**
+   * Validate email address
+   * @param {String} email - Email address
+   * @returns {Boolean} Is valid
+   */
+  isValidEmail(email) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  }
+
+  /**
+   * Send welcome email
+   * @param {Object} user - User object
+   * @returns {Object} Send result
+   */
+  async sendWelcomeEmail(user) {
+    return await this.sendEmail({
+      to: user.email,
+      subject: 'Welcome to Vaccination Tracking System',
+      template: 'welcome',
+      data: {
+        userName: `${user.firstName} ${user.lastName}`,
+        email: user.email
+      }
+    });
+  }
+
+  /**
+   * Send password reset email
+   * @param {Object} user - User object
+   * @param {String} resetToken - Reset token
+   * @returns {Object} Send result
+   */
+  async sendPasswordResetEmail(user, resetToken) {
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+    
+    return await this.sendEmail({
+      to: user.email,
+      subject: 'Password Reset Request - Vaccination Tracking System',
+      template: 'password-reset',
+      data: {
+        userName: `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        resetLink,
+        expirationTime: '1 hour'
+      }
+    });
+  }
+
+  /**
+   * Send appointment confirmation email
+   * @param {Object} user - User object
+   * @param {Object} appointmentData - Appointment details
+   * @returns {Object} Send result
+   */
+  async sendAppointmentConfirmation(user, appointmentData) {
+    return await this.sendEmail({
+      to: user.email,
+      subject: `Appointment Confirmed - ${appointmentData.childName}`,
+      template: 'appointment-confirmation',
+      data: {
+        userName: `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        ...appointmentData
+      }
+    });
+  }
+
+  /**
+   * Send vaccination summary email
+   * @param {Object} user - User object
+   * @param {Object} summaryData - Summary data
+   * @returns {Object} Send result
+   */
+  async sendVaccinationSummary(user, summaryData) {
+    return await this.sendEmail({
+      to: user.email,
+      subject: 'Monthly Vaccination Summary',
+      template: 'vaccination-summary',
+      data: {
+        userName: `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        ...summaryData
+      }
+    });
+  }
+
+  /**
+   * Test email configuration
+   * @param {String} testEmail - Test email address (optional)
+   * @returns {Object} Test result
+   */
+  async testEmailConfiguration(testEmail = null) {
+    try {
+      if (!this.transporter) {
+        throw new Error('Email transporter not initialized');
+      }
+
+      await this.transporter.verify();
+
+      // Send test email if address provided
+      if (testEmail) {
+        await this.sendEmail({
+          to: testEmail,
+          subject: 'Test Email - Vaccination Tracking System',
+          template: 'default-notification',
+          data: {
+            notificationTitle: 'Email Configuration Test',
+            message: `This is a test email sent at ${formatDate(new Date(), 'YYYY-MM-DD HH:mm:ss')} to verify your email configuration is working correctly.`
+          }
+        });
+      }
+
+      return {
+        success: true,
+        message: 'Email configuration is valid',
+        testEmailSent: !!testEmail,
+        service: process.env.EMAIL_SERVICE,
+        host: process.env.EMAIL_HOST
+      };
+
+    } catch (error) {
+      logger.error('Email configuration test failed:', error);
+      return {
+        success: false,
+        message: 'Email configuration test failed',
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Get email statistics
+   * @returns {Object} Email statistics
+   */
+  getEmailStatistics() {
+    return {
+      templatesLoaded: this.templates.size,
+      availableTemplates: Array.from(this.templates.keys()),
+      isInitialized: !!this.transporter,
+      service: process.env.EMAIL_SERVICE,
+      fromAddress: process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_USER
+    };
+  }
+
+  /**
+   * Reload email templates
+   * @returns {Object} Reload result
+   */
+  async reloadTemplates() {
+    try {
+      this.templates.clear();
+      await this.loadTemplates();
+      
+      return {
+        success: true,
+        message: 'Email templates reloaded successfully',
+        templatesLoaded: this.templates.size
+      };
+    } catch (error) {
+      logger.error('Failed to reload email templates:', error);
+      return {
+        success: false,
+        message: 'Failed to reload email templates',
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Sleep function for rate limiting
+   * @param {Number} ms - Milliseconds to sleep
+   * @returns {Promise} Sleep promise
+   */
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Close email service
+   */
+  close() {
+    if (this.transporter) {
+      this.transporter.close();
+      logger.info('Email service closed');
+    }
+  }
+}
+
+module.exports = new EmailService();
