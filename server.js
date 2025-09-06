@@ -13,7 +13,35 @@ const app = express();
 
 // Import middlewares
 const errorHandler = require('./middleware/errorHandler');
+const auth = require('./middleware/auth');
+const { validateRequest } = require('./middleware/validation');
+
+// Import utils
 const logger = require('./utils/logger');
+const { USER_ROLES } = require('./utils/constants');
+const validators = require('./utils/validators');
+const helpers = require('./utils/helpers');
+
+// Import models
+const User = require('./models/User');
+const Child = require('./models/Child');
+const Vaccine = require('./models/Vaccine');
+const VaccinationRecord = require('./models/VaccinationRecord');
+const Notification = require('./models/Notification');
+
+// Import controllers
+const authController = require('./controllers/authController');
+const userController = require('./controllers/userController');
+const childController = require('./controllers/childController');
+const vaccineController = require('./controllers/vaccineController');
+const vaccinationRecordController = require('./controllers/vaccinationRecordController');
+const notificationController = require('./controllers/notificationController');
+
+// Import services
+const notificationService = require('./services/notificationService');
+const emailService = require('./services/emailService');
+const smsService = require('./services/smsService');
+const vaccinationScheduler = require('./services/vaccinationScheduler');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -22,9 +50,6 @@ const childrenRoutes = require('./routes/children');
 const vaccineRoutes = require('./routes/vaccines');
 const vaccinationRecordRoutes = require('./routes/vaccinationRecords');
 const notificationRoutes = require('./routes/notifications');
-
-// Import services
-const notificationService = require('./services/notificationService');
 
 // Security middleware
 app.use(helmet());
