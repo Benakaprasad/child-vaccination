@@ -1,9 +1,7 @@
 const express = require('express');
 const notificationController = require('../controllers/notificationController');
-const auth = require('../middleware/auth');
-const { requireRole } = require('../middleware/auth');
+const { auth, requireRole } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
-const { notificationSchema, paginationSchema } = require('../utils/validators');
 const { USER_ROLES, NOTIFICATION_TYPES, DELIVERY_METHODS } = require('../utils/constants');
 
 const router = express.Router();
@@ -77,7 +75,7 @@ router.get(
 router.get(
   '/statistics',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     query: {
       userId: {
@@ -108,8 +106,23 @@ router.get(
 router.get(
   '/pending',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
-  validateRequest(paginationSchema, 'query'),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
+  // FIXED: Changed from validateRequest(paginationSchema, 'query') to proper format
+  validateRequest({
+    query: {
+      page: {
+        type: 'number',
+        min: 1,
+        optional: true
+      },
+      limit: {
+        type: 'number',
+        min: 1,
+        max: 100,
+        optional: true
+      }
+    }
+  }),
   notificationController.getPendingNotifications
 );
 
@@ -121,8 +134,50 @@ router.get(
 router.post(
   '/',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
-  validateRequest(notificationSchema),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
+  // FIXED: Changed from validateRequest(notificationSchema) to inline schema
+  validateRequest({
+    body: {
+      recipient: {
+        type: 'string',
+        pattern: '^[0-9a-fA-F]{24}$',
+        required: true
+      },
+      title: {
+        type: 'string',
+        required: true,
+        maxLength: 100
+      },
+      message: {
+        type: 'string',
+        required: true,
+        maxLength: 500
+      },
+      type: {
+        type: 'string',
+        enum: Object.values(NOTIFICATION_TYPES),
+        required: true
+      },
+      deliveryMethods: {
+        type: 'array',
+        required: true,
+        minItems: 1,
+        items: {
+          type: 'string',
+          enum: Object.values(DELIVERY_METHODS)
+        }
+      },
+      scheduledDate: {
+        type: 'string',
+        format: 'date-time',
+        optional: true
+      },
+      metadata: {
+        type: 'object',
+        optional: true
+      }
+    }
+  }),
   notificationController.createNotification
 );
 
@@ -134,7 +189,7 @@ router.post(
 router.post(
   '/broadcast',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     body: {
       recipients: {
@@ -189,7 +244,7 @@ router.post(
 router.post(
   '/send-vaccination-reminders',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     body: {
       type: {
@@ -233,7 +288,7 @@ router.post(
 router.post(
   '/process-pending',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   notificationController.processPendingNotifications
 );
 
@@ -265,7 +320,7 @@ router.get(
 router.put(
   '/:id',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     params: {
       id: {
@@ -314,7 +369,7 @@ router.put(
 router.delete(
   '/:id',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -386,7 +441,7 @@ router.patch(
 router.post(
   '/:id/send',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     params: {
       id: {
@@ -407,7 +462,7 @@ router.post(
 router.post(
   '/:id/resend',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     params: {
       id: {
@@ -439,7 +494,7 @@ router.post(
 router.get(
   '/:id/delivery-status',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     params: {
       id: {
@@ -460,7 +515,7 @@ router.get(
 router.delete(
   '/bulk-delete',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     body: {
       notificationIds: {
@@ -486,7 +541,7 @@ router.delete(
 router.post(
   '/test-delivery',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     body: {
       recipient: {

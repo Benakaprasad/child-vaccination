@@ -1,17 +1,21 @@
 const mongoose = require('mongoose');
 const { VACCINATION_STATUS } = require('../utils/constants');
 
-// Check if model already exists to prevent overwrite error
-if (mongoose.models.VaccinationRecord) {
-  module.exports = mongoose.models.VaccinationRecord;
+// Prevent model overwrite error
+const MODEL_NAME = 'VaccinationRecord';
+
+if (mongoose.models[MODEL_NAME]) {
+  module.exports = mongoose.models[MODEL_NAME];
 } else {
   const vaccinationRecordSchema = new mongoose.Schema({
-    childId: {
+    // CHANGED: childId -> child to match controller expectations
+    child: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Child',
       required: [true, 'Child ID is required']
     },
-    vaccineId: {
+    // CHANGED: vaccineId -> vaccine to match controller expectations
+    vaccine: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Vaccine',
       required: [true, 'Vaccine ID is required']
@@ -25,15 +29,68 @@ if (mongoose.models.VaccinationRecord) {
       type: Date,
       required: [true, 'Scheduled date is required']
     },
-    completedDate: {
+    // CHANGED: completedDate -> administeredDate to match controller
+    administeredDate: {
       type: Date,
       default: null
     },
-    doctorId: {
+    // CHANGED: doctorId -> createdBy to match controller
+    createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      default: null
+      required: [true, 'Creator is required']
     },
+    // ADDED: Fields that controller expects
+    administeredBy: {
+      type: String
+    },
+    location: {
+      type: String
+    },
+    completedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    completedAt: {
+      type: Date
+    },
+    lastModifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    lastModifiedAt: {
+      type: Date
+    },
+    cancellationReason: {
+      type: String
+    },
+    cancelledBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    cancelledAt: {
+      type: Date
+    },
+    missedReason: {
+      type: String
+    },
+    missedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    missedAt: {
+      type: Date
+    },
+    rescheduleHistory: [{
+      oldDate: Date,
+      newDate: Date,
+      reason: String,
+      rescheduledBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      rescheduledAt: Date
+    }],
     clinicInfo: {
       name: String,
       address: String,
@@ -77,6 +134,25 @@ if (mongoose.models.VaccinationRecord) {
       type: String,
       maxlength: [500, 'Notes cannot be more than 500 characters']
     },
+    // CHANGED: reactions -> sideEffects to match controller
+    sideEffects: [{
+      type: String
+    }],
+    // ADDED: sideEffectsReports that controller expects
+    sideEffectsReports: [{
+      effects: [String],
+      severity: {
+        type: String,
+        enum: ['mild', 'moderate', 'severe'],
+        default: 'mild'
+      },
+      notes: String,
+      reportedDate: Date,
+      reportedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      }
+    }],
     reactions: [{
       type: {
         type: String,
@@ -148,12 +224,13 @@ if (mongoose.models.VaccinationRecord) {
     timestamps: true
   });
 
-  // Compound indexes for better performance
-  vaccinationRecordSchema.index({ childId: 1, status: 1 });
+  // UPDATED: Compound indexes for better performance (changed field names)
+  vaccinationRecordSchema.index({ child: 1, status: 1 });
   vaccinationRecordSchema.index({ scheduledDate: 1, status: 1 });
-  vaccinationRecordSchema.index({ vaccineId: 1, status: 1 });
-  vaccinationRecordSchema.index({ doctorId: 1 });
+  vaccinationRecordSchema.index({ vaccine: 1, status: 1 });
+  vaccinationRecordSchema.index({ createdBy: 1 });
   vaccinationRecordSchema.index({ status: 1, scheduledDate: 1 });
+  vaccinationRecordSchema.index({ child: 1, vaccine: 1, doseNumber: 1 });
 
   // Virtual for days until scheduled
   vaccinationRecordSchema.virtual('daysUntilScheduled').get(function() {
@@ -177,13 +254,13 @@ if (mongoose.models.VaccinationRecord) {
     return Math.floor(diffTime / (1000 * 60 * 60 * 24));
   });
 
-  // Static methods
+  // UPDATED: Static methods (changed field names)
   vaccinationRecordSchema.statics.findByChild = function(childId, status = null) {
-    const query = { childId };
+    const query = { child: childId };
     if (status) query.status = status;
     return this.find(query)
-      .populate('vaccineId', 'name description category')
-      .populate('doctorId', 'name phone email')
+      .populate('vaccine', 'name description category')
+      .populate('createdBy', 'name phone email')
       .sort({ scheduledDate: 1 });
   };
 
@@ -200,13 +277,13 @@ if (mongoose.models.VaccinationRecord) {
     };
     
     if (childIds) {
-      query.childId = { $in: childIds };
+      query.child = { $in: childIds };
     }
     
     return this.find(query)
-      .populate('childId', 'name dob parentId')
-      .populate('vaccineId', 'name description')
-      .populate('doctorId', 'name')
+      .populate('child', 'firstName lastName dateOfBirth parent')
+      .populate('vaccine', 'name description')
+      .populate('createdBy', 'firstName lastName')
       .sort({ scheduledDate: 1 });
   };
 
@@ -217,40 +294,44 @@ if (mongoose.models.VaccinationRecord) {
     };
     
     if (childIds) {
-      query.childId = { $in: childIds };
+      query.child = { $in: childIds };
     }
     
     return this.find(query)
-      .populate('childId', 'name dob parentId')
-      .populate('vaccineId', 'name description')
-      .populate('doctorId', 'name')
+      .populate('child', 'firstName lastName dateOfBirth parent')
+      .populate('vaccine', 'name description')
+      .populate('createdBy', 'firstName lastName')
       .sort({ scheduledDate: 1 });
   };
 
   vaccinationRecordSchema.statics.findCompleted = function(childId, vaccineId = null) {
     const query = {
-      childId,
+      child: childId,
       status: VACCINATION_STATUS.COMPLETED
     };
     
-    if (vaccineId) query.vaccineId = vaccineId;
+    if (vaccineId) query.vaccine = vaccineId;
     
     return this.find(query)
-      .populate('vaccineId', 'name description')
-      .populate('doctorId', 'name')
-      .sort({ completedDate: -1 });
+      .populate('vaccine', 'name description')
+      .populate('createdBy', 'firstName lastName')
+      .sort({ administeredDate: -1 });
   };
 
-  // Instance methods
-  vaccinationRecordSchema.methods.markCompleted = function(doctorId = null, completionData = {}) {
+  // UPDATED: Instance methods (changed field names and logic to match controller)
+  vaccinationRecordSchema.methods.markCompleted = function(createdById = null, completionData = {}) {
     this.status = VACCINATION_STATUS.COMPLETED;
-    this.completedDate = completionData.completedDate || new Date();
+    this.administeredDate = completionData.administeredDate || new Date();
+    this.completedAt = new Date();
     
-    if (doctorId) this.doctorId = doctorId;
+    if (createdById) this.completedBy = createdById;
+    if (completionData.administeredBy) this.administeredBy = completionData.administeredBy;
+    if (completionData.location) this.location = completionData.location;
     if (completionData.batchNumber) this.batchNumber = completionData.batchNumber;
     if (completionData.lotNumber) this.lotNumber = completionData.lotNumber;
     if (completionData.administrationSite) this.administrationSite = completionData.administrationSite;
     if (completionData.reactions) this.reactions = completionData.reactions;
+    if (completionData.sideEffects) this.sideEffects = completionData.sideEffects;
     if (completionData.notes) this.notes = completionData.notes;
     
     return this.save();
@@ -261,8 +342,20 @@ if (mongoose.models.VaccinationRecord) {
       this.originalScheduledDate = this.scheduledDate;
     }
     
+    // Add to reschedule history
+    const rescheduleEntry = {
+      oldDate: this.scheduledDate,
+      newDate: newDate,
+      reason: reason,
+      rescheduledAt: new Date()
+    };
+    
+    if (!this.rescheduleHistory) this.rescheduleHistory = [];
+    this.rescheduleHistory.push(rescheduleEntry);
+    
     this.scheduledDate = newDate;
     this.isDelayed = true;
+    this.status = VACCINATION_STATUS.SCHEDULED;
     
     if (reason) {
       this.delayReason = reason;
@@ -279,13 +372,20 @@ if (mongoose.models.VaccinationRecord) {
   // Pre-save middleware
   vaccinationRecordSchema.pre('save', function(next) {
     // Auto-set completion date when status changes to completed
-    if (this.isModified('status') && this.status === VACCINATION_STATUS.COMPLETED && !this.completedDate) {
-      this.completedDate = new Date();
+    if (this.isModified('status') && this.status === VACCINATION_STATUS.COMPLETED && !this.administeredDate) {
+      this.administeredDate = new Date();
+      this.completedAt = new Date();
     }
     
     // Reset completed date if status is not completed
     if (this.isModified('status') && this.status !== VACCINATION_STATUS.COMPLETED) {
-      this.completedDate = null;
+      this.administeredDate = null;
+      this.completedAt = null;
+    }
+    
+    // Update lastModifiedAt
+    if (this.isModified() && !this.isNew) {
+      this.lastModifiedAt = new Date();
     }
     
     next();
@@ -295,5 +395,5 @@ if (mongoose.models.VaccinationRecord) {
   vaccinationRecordSchema.set('toJSON', { virtuals: true });
   vaccinationRecordSchema.set('toObject', { virtuals: true });
 
-  module.exports = mongoose.model('VaccinationRecord', vaccinationRecordSchema);
+  module.exports = mongoose.model(MODEL_NAME, vaccinationRecordSchema);
 }

@@ -1,25 +1,42 @@
-const logger = require('../utils/logger');
+// middleware/errorHandler.js - Updated for Winston logger
+const { logger, logSecurity } = require('../utils/logger');
 
 const errorHandler = (err, req, res, next) => {
   let error = { ...err };
   error.message = err.message;
 
-  // Log error
-  logger.error(`Error: ${err.message}`, {
-    stack: err.stack,
-    url: req.originalUrl,
-    method: req.method,
-    ip: req.ip,
-    userAgent: req.get('User-Agent'),
-    userId: req.user ? req.user._id : null
-  });
+  // Log error using Winston logger
+  try {
+    logger.error('Application Error', {
+      message: err.message,
+      stack: err.stack,
+      url: req.originalUrl,
+      method: req.method,
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      userId: req.user ? req.user._id : null,
+      statusCode: error.statusCode || 500,
+      type: 'error'
+    });
+  } catch (logError) {
+    // Fallback to console if logger fails
+    console.error('Logger failed:', logError.message);
+    console.error('Original Error:', {
+      message: err.message,
+      stack: err.stack,
+      url: req.originalUrl,
+      method: req.method
+    });
+  }
 
-  console.error('Error Details:', {
-    message: err.message,
-    stack: err.stack,
-    url: req.originalUrl,
-    method: req.method
-  });
+  // Log security events for suspicious activities
+  if (err.statusCode === 401 || err.statusCode === 403) {
+    logSecurity('Unauthorized Access Attempt', req.user ? req.user._id : null, req.ip, {
+      url: req.originalUrl,
+      method: req.method,
+      error: err.message
+    });
+  }
 
   // Mongoose bad ObjectId
   if (err.name === 'CastError') {
@@ -29,8 +46,8 @@ const errorHandler = (err, req, res, next) => {
 
   // Mongoose duplicate key
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    const value = err.keyValue[field];
+    const field = Object.keys(err.keyValue || {})[0] || 'field';
+    const value = err.keyValue ? err.keyValue[field] : 'unknown';
     const message = `${field} '${value}' already exists`;
     error = { message, statusCode: 400 };
   }
@@ -45,6 +62,10 @@ const errorHandler = (err, req, res, next) => {
   if (err.name === 'JsonWebTokenError') {
     const message = 'Invalid token';
     error = { message, statusCode: 401 };
+    logSecurity('Invalid JWT Token', req.user ? req.user._id : null, req.ip, {
+      token: req.headers.authorization,
+      url: req.originalUrl
+    });
   }
 
   if (err.name === 'TokenExpiredError') {
@@ -83,6 +104,10 @@ const errorHandler = (err, req, res, next) => {
   if (err.status === 429) {
     const message = 'Too many requests, please try again later';
     error = { message, statusCode: 429 };
+    logSecurity('Rate Limit Exceeded', req.user ? req.user._id : null, req.ip, {
+      url: req.originalUrl,
+      method: req.method
+    });
   }
 
   // Default to 500 server error
@@ -93,6 +118,9 @@ const errorHandler = (err, req, res, next) => {
   const errorResponse = {
     success: false,
     error: message,
+    timestamp: new Date().toISOString(),
+    path: req.originalUrl,
+    method: req.method,
     ...(process.env.NODE_ENV === 'development' && {
       stack: err.stack,
       details: err
@@ -139,9 +167,45 @@ const notFound = (req, res, next) => {
   next(error);
 };
 
+// Helper for handling async route errors
+const catchAsync = (fn) => {
+  return (req, res, next) => {
+    fn(req, res, next).catch(next);
+  };
+};
+
+// Global uncaught exception handler
+const handleUncaughtException = () => {
+  process.on('uncaughtException', (err) => {
+    logger.error('UNCAUGHT EXCEPTION! Shutting down...', {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      type: 'uncaughtException'
+    });
+    process.exit(1);
+  });
+};
+
+// Global unhandled rejection handler
+const handleUnhandledRejection = () => {
+  process.on('unhandledRejection', (err) => {
+    logger.error('UNHANDLED REJECTION! Shutting down...', {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      type: 'unhandledRejection'
+    });
+    process.exit(1);
+  });
+};
+
 module.exports = {
   errorHandler,
   AppError,
   asyncHandler,
-  notFound
+  notFound,
+  catchAsync,
+  handleUncaughtException,
+  handleUnhandledRejection
 };

@@ -1,15 +1,7 @@
 const express = require('express');
 const vaccinationRecordController = require('../controllers/vaccinationRecordController');
-const auth = require('../middleware/auth');
-const { requireRole } = require('../middleware/auth');
+const { auth, requireRole } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
-const { 
-  vaccinationRecordSchema, 
-  vaccinationRecordUpdateSchema,
-  completeVaccinationSchema,
-  paginationSchema,
-  dateRangeSchema 
-} = require('../utils/validators');
 const { USER_ROLES, VACCINATION_STATUS } = require('../utils/constants');
 
 const router = express.Router();
@@ -235,7 +227,40 @@ router.get(
 router.post(
   '/',
   auth,
-  validateRequest(vaccinationRecordSchema),
+  // FIXED: Changed from validateRequest(vaccinationRecordSchema) to inline schema
+  validateRequest({
+    body: {
+      child: {
+        type: 'string',
+        pattern: '^[0-9a-fA-F]{24}$',
+        required: true
+      },
+      vaccine: {
+        type: 'string',
+        pattern: '^[0-9a-fA-F]{24}$',
+        required: true
+      },
+      doseNumber: {
+        type: 'number',
+        min: 1,
+        required: true
+      },
+      scheduledDate: {
+        type: 'string',
+        format: 'date-time',
+        required: true
+      },
+      notes: {
+        type: 'string',
+        maxLength: 500,
+        optional: true
+      },
+      reminderEnabled: {
+        type: 'boolean',
+        optional: true
+      }
+    }
+  }),
   vaccinationRecordController.createVaccinationRecord
 );
 
@@ -247,7 +272,7 @@ router.post(
 router.post(
   '/bulk-schedule',
   auth,
-  requireRole([USER_ROLES.DOCTOR, USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.DOCTOR, USER_ROLES.ADMIN),
   validateRequest({
     body: {
       childId: {
@@ -328,7 +353,30 @@ router.put(
       }
     }
   }),
-  validateRequest(vaccinationRecordUpdateSchema),
+  // FIXED: Changed from validateRequest(vaccinationRecordUpdateSchema) to inline schema
+  validateRequest({
+    body: {
+      scheduledDate: {
+        type: 'string',
+        format: 'date-time',
+        optional: true
+      },
+      notes: {
+        type: 'string',
+        maxLength: 500,
+        optional: true
+      },
+      reminderEnabled: {
+        type: 'boolean',
+        optional: true
+      },
+      status: {
+        type: 'string',
+        enum: Object.values(VACCINATION_STATUS),
+        optional: true
+      }
+    }
+  }),
   vaccinationRecordController.updateVaccinationRecord
 );
 
@@ -340,7 +388,7 @@ router.put(
 router.patch(
   '/:id/complete',
   auth,
-  requireRole([USER_ROLES.DOCTOR, USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.DOCTOR, USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -350,7 +398,41 @@ router.patch(
       }
     }
   }),
-  validateRequest(completeVaccinationSchema),
+  // FIXED: Changed from validateRequest(completeVaccinationSchema) to inline schema
+  validateRequest({
+    body: {
+      administeredDate: {
+        type: 'string',
+        format: 'date-time',
+        required: true
+      },
+      administeredBy: {
+        type: 'string',
+        maxLength: 100,
+        required: true
+      },
+      batchNumber: {
+        type: 'string',
+        maxLength: 50,
+        optional: true
+      },
+      manufacturer: {
+        type: 'string',
+        maxLength: 100,
+        optional: true
+      },
+      location: {
+        type: 'string',
+        maxLength: 200,
+        optional: true
+      },
+      notes: {
+        type: 'string',
+        maxLength: 500,
+        optional: true
+      }
+    }
+  }),
   vaccinationRecordController.markVaccinationCompleted
 );
 
@@ -426,7 +508,7 @@ router.patch(
 router.patch(
   '/:id/mark-missed',
   auth,
-  requireRole([USER_ROLES.DOCTOR, USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.DOCTOR, USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -459,7 +541,7 @@ router.patch(
 router.delete(
   '/:id',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -550,7 +632,7 @@ router.get(
     params: {
       childId: {
         type: 'string',
-        pattern: '^[0-9a-fA-F]{24}$',
+        pattern: '^[0-9a-fA-F]{24}',
         required: true
       }
     },
@@ -581,7 +663,7 @@ router.get(
 router.post(
   '/batch-update-status',
   auth,
-  requireRole([USER_ROLES.DOCTOR, USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.DOCTOR, USER_ROLES.ADMIN),
   validateRequest({
     body: {
       recordIds: {
@@ -591,7 +673,7 @@ router.post(
         maxItems: 50,
         items: {
           type: 'string',
-          pattern: '^[0-9a-fA-F]{24}$'
+          pattern: '^[0-9a-fA-F]{24}',
         }
       },
       status: {
@@ -622,7 +704,7 @@ router.post(
 router.get(
   '/compliance-report',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     query: {
       startDate: {
@@ -642,7 +724,7 @@ router.get(
       },
       vaccineId: {
         type: 'string',
-        pattern: '^[0-9a-fA-F]{24}$',
+        pattern: '^[0-9a-fA-F]{24}',
         optional: true
       }
     }
@@ -658,7 +740,7 @@ router.get(
 router.post(
   '/generate-reminders',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     body: {
       type: {
@@ -674,14 +756,14 @@ router.post(
       },
       childId: {
         type: 'string',
-        pattern: '^[0-9a-fA-F]{24}$',
+        pattern: '^[0-9a-fA-F]{24}',
         optional: true
       },
       deliveryMethods: {
         type: 'array',
         required: true,
         items: {
-          type: 'string',
+          type: 'string', 
           enum: ['email', 'sms', 'push']
         }
       }

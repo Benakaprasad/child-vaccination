@@ -17,7 +17,7 @@ class UserController {
   /**
    * Get all users (Admin only)
    */
-  async getAllUsers(req, res) {
+  async getAllUsers(req, res, next) {
     try {
       const { 
         page = 1, 
@@ -29,10 +29,14 @@ class UserController {
         search
       } = req.query;
 
+      // Validate pagination parameters
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit))); // Cap at 100
+
       // Build filter object
       let filter = {};
       
-      if (role) {
+      if (role && Object.values(USER_ROLES).includes(role)) {
         filter.role = role;
       }
       
@@ -40,10 +44,11 @@ class UserController {
         filter.isActive = isActive === 'true';
       }
       
-      if (search) {
+      if (search && search.trim().length >= 2) {
+        const searchRegex = { $regex: search.trim(), $options: 'i' };
         filter.$or = [
-          { name: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } }
+          { name: searchRegex },
+          { email: searchRegex }
         ];
       }
 
@@ -51,8 +56,8 @@ class UserController {
       
       const result = await paginateResults(
         query,
-        parseInt(page),
-        parseInt(limit),
+        pageNum,
+        limitNum,
         sortBy,
         sortOrder
       );
@@ -68,18 +73,23 @@ class UserController {
 
     } catch (error) {
       logger.error('Get all users error:', error);
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Get user by ID
    */
-  async getUserById(req, res) {
+  async getUserById(req, res, next) {
     try {
       const { id } = req.params;
       const requesterId = req.user._id;
       const requesterRole = req.user.role;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid user ID format', 400);
+      }
 
       // Users can view their own profile, or admins can view any profile
       if (id !== requesterId.toString() && requesterRole !== USER_ROLES.ADMIN) {
@@ -98,20 +108,24 @@ class UserController {
 
     } catch (error) {
       logger.error('Get user by ID error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Update user (Admin only or self-update)
    */
-  async updateUser(req, res) {
+  async updateUser(req, res, next) {
     try {
       const { id } = req.params;
       const requesterId = req.user._id;
       const requesterRole = req.user.role;
       const updates = req.body;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid user ID format', 400);
+      }
 
       // Users can update their own profile, or admins can update any profile
       if (id !== requesterId.toString() && requesterRole !== USER_ROLES.ADMIN) {
@@ -119,19 +133,26 @@ class UserController {
       }
 
       // Remove sensitive fields that shouldn't be updated
-      delete updates.password;
-      delete updates.createdAt;
-      delete updates.updatedAt;
+      const protectedFields = ['password', 'createdAt', 'updatedAt', '_id'];
+      protectedFields.forEach(field => delete updates[field]);
 
       // Only admins can update email and role
       if (requesterRole !== USER_ROLES.ADMIN) {
-        delete updates.email;
-        delete updates.role;
-        delete updates.isActive;
+        const adminOnlyFields = ['email', 'role', 'isActive'];
+        adminOnlyFields.forEach(field => delete updates[field]);
+      }
+
+      // Validate role if being updated
+      if (updates.role && !Object.values(USER_ROLES).includes(updates.role)) {
+        throw new AppError('Invalid role specified', 400);
       }
 
       // Clean empty fields
       const cleanedUpdates = removeEmptyFields(updates);
+
+      if (Object.keys(cleanedUpdates).length === 0) {
+        throw new AppError('No valid fields to update', 400);
+      }
 
       const user = await User.findByIdAndUpdate(
         id,
@@ -151,17 +172,21 @@ class UserController {
 
     } catch (error) {
       logger.error('Update user error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Delete user (Admin only)
    */
-  async deleteUser(req, res) {
+  async deleteUser(req, res, next) {
     try {
       const { id } = req.params;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid user ID format', 400);
+      }
 
       // Prevent admin from deleting themselves
       if (id === req.user._id.toString()) {
@@ -175,6 +200,8 @@ class UserController {
 
       // Soft delete - deactivate instead of hard delete
       user.isActive = false;
+      user.deletedAt = new Date();
+      user.deletedBy = req.user._id;
       await user.save();
 
       logger.info(`User deleted: ${user.email} by ${req.user.email}`);
@@ -185,34 +212,34 @@ class UserController {
 
     } catch (error) {
       logger.error('Delete user error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Get user statistics
    */
-  async getUserStatistics(req, res) {
+  async getUserStatistics(req, res, next) {
     try {
-      const stats = await User.aggregate([
-        {
-          $group: {
-            _id: '$role',
-            count: { $sum: 1 },
-            active: { $sum: { $cond: ['$isActive', 1, 0] } },
-            inactive: { $sum: { $cond: ['$isActive', 0, 1] } }
+      const [stats, totalUsers, activeUsers, newUsersThisMonth] = await Promise.all([
+        User.aggregate([
+          {
+            $group: {
+              _id: '$role',
+              count: { $sum: 1 },
+              active: { $sum: { $cond: ['$isActive', 1, 0] } },
+              inactive: { $sum: { $cond: ['$isActive', 0, 1] } }
+            }
           }
-        }
+        ]),
+        User.countDocuments(),
+        User.countDocuments({ isActive: true }),
+        User.countDocuments({
+          createdAt: {
+            $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+          }
+        })
       ]);
-
-      const totalUsers = await User.countDocuments();
-      const activeUsers = await User.countDocuments({ isActive: true });
-      const newUsersThisMonth = await User.countDocuments({
-        createdAt: {
-          $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-        }
-      });
 
       const formattedStats = {
         total: totalUsers,
@@ -235,14 +262,14 @@ class UserController {
 
     } catch (error) {
       logger.error('Get user statistics error:', error);
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Get user dashboard data
    */
-  async getDashboard(req, res) {
+  async getDashboard(req, res, next) {
     try {
       const userId = req.user._id;
 
@@ -277,12 +304,13 @@ class UserController {
         ]);
 
         // Get upcoming vaccinations (next 30 days)
+        const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         const upcomingVaccinations = await VaccinationRecord.find({
           childId: { $in: childIds },
           status: 'scheduled',
           scheduledDate: {
             $gte: new Date(),
-            $lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+            $lte: thirtyDaysFromNow
           }
         })
         .populate('childId', 'name')
@@ -325,18 +353,21 @@ class UserController {
 
     } catch (error) {
       logger.error('Get dashboard error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Update user preferences
    */
-  async updatePreferences(req, res) {
+  async updatePreferences(req, res, next) {
     try {
       const userId = req.user._id;
       const { notificationPreferences } = req.body;
+
+      if (!notificationPreferences || typeof notificationPreferences !== 'object') {
+        throw new AppError('Valid notification preferences are required', 400);
+      }
 
       const user = await User.findByIdAndUpdate(
         userId,
@@ -358,8 +389,7 @@ class UserController {
 
     } catch (error) {
       logger.error('Update preferences error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
@@ -369,6 +399,8 @@ class UserController {
    */
   async getSystemStatistics() {
     try {
+      const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      
       const [
         totalUsers,
         totalChildren,
@@ -387,7 +419,7 @@ class UserController {
           status: 'scheduled',
           scheduledDate: {
             $gte: new Date(),
-            $lte: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // Next 7 days
+            $lte: sevenDaysFromNow
           }
         })
       ]);
@@ -409,33 +441,32 @@ class UserController {
   /**
    * Search users
    */
-  async searchUsers(req, res) {
+  async searchUsers(req, res, next) {
     try {
-      const { 
-        q, 
-        role, 
-        limit = 10 
-      } = req.query;
+      const { q, role, limit = 10 } = req.query;
 
       if (!q || q.trim().length < 2) {
         throw new AppError('Search query must be at least 2 characters long', 400);
       }
 
+      const searchTerm = q.trim();
+      const searchLimit = Math.min(50, Math.max(1, parseInt(limit))); // Cap at 50
+
       let filter = {
         isActive: true,
         $or: [
-          { name: { $regex: q, $options: 'i' } },
-          { email: { $regex: q, $options: 'i' } }
+          { name: { $regex: searchTerm, $options: 'i' } },
+          { email: { $regex: searchTerm, $options: 'i' } }
         ]
       };
 
-      if (role) {
+      if (role && Object.values(USER_ROLES).includes(role)) {
         filter.role = role;
       }
 
       const users = await User.find(filter)
         .select('name email role profileImage')
-        .limit(parseInt(limit))
+        .limit(searchLimit)
         .sort({ name: 1 });
 
       res.status(200).json(
@@ -447,18 +478,22 @@ class UserController {
 
     } catch (error) {
       logger.error('Search users error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Upload user profile image
    */
-  async uploadProfileImage(req, res) {
+  async uploadProfileImage(req, res, next) {
     try {
       const userId = req.user._id;
       const { id } = req.params;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid user ID format', 400);
+      }
 
       // Users can update their own profile image, or admins can update any profile image
       if (id !== userId.toString() && req.user.role !== USER_ROLES.ADMIN) {
@@ -467,6 +502,12 @@ class UserController {
 
       if (!req.file) {
         throw new AppError('No image file provided', 400);
+      }
+
+      // Validate file type (assuming multer middleware handles this, but double-check)
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      if (!allowedTypes.includes(req.file.mimetype)) {
+        throw new AppError('Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed', 400);
       }
 
       const user = await User.findByIdAndUpdate(
@@ -489,38 +530,54 @@ class UserController {
 
     } catch (error) {
       logger.error('Upload profile image error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Get user activity log (Admin only)
    */
-  async getUserActivity(req, res) {
+  async getUserActivity(req, res, next) {
     try {
       const { id } = req.params;
-      const { 
-        page = 1, 
-        limit = 20, 
-        startDate, 
-        endDate 
-      } = req.query;
+      const { page = 1, limit = 20, startDate, endDate } = req.query;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid user ID format', 400);
+      }
 
       const user = await User.findById(id);
       if (!user) {
         throw new AppError(RESPONSE_MESSAGES.ERROR.NOT_FOUND, 404);
       }
 
+      // Build date filter if provided
+      let dateFilter = {};
+      if (startDate) {
+        dateFilter.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        dateFilter.$lte = new Date(endDate);
+      }
+
       // This would require implementing an activity logging system
-      // For now, return basic user information
+      // For now, return basic user information with enhanced data
       const activity = {
         userId: user._id,
         email: user.email,
+        name: user.name,
+        role: user.role,
         lastLogin: user.lastLogin,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
-        isActive: user.isActive
+        isActive: user.isActive,
+        loginCount: user.loginCount || 0, // Assuming this field exists
+        // Add more activity fields as needed
+        dateRange: {
+          startDate: startDate || user.createdAt,
+          endDate: endDate || new Date()
+        }
       };
 
       res.status(200).json(
@@ -529,28 +586,31 @@ class UserController {
 
     } catch (error) {
       logger.error('Get user activity error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Export users data (Admin only)
    */
-  async exportUsers(req, res) {
+  async exportUsers(req, res, next) {
     try {
       const { format = 'json', role, isActive } = req.query;
 
       let filter = {};
-      if (role) filter.role = role;
-      if (isActive !== undefined) filter.isActive = isActive === 'true';
+      if (role && Object.values(USER_ROLES).includes(role)) {
+        filter.role = role;
+      }
+      if (isActive !== undefined) {
+        filter.isActive = isActive === 'true';
+      }
 
       const users = await User.find(filter)
         .select('-password')
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .lean(); // Use lean() for better performance on large datasets
 
       if (format === 'csv') {
-        // Convert to CSV format
         const csv = this.convertToCSV(users);
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', 'attachment; filename="users.csv"');
@@ -561,14 +621,14 @@ class UserController {
         createApiResponse(true, RESPONSE_MESSAGES.SUCCESS.RETRIEVED, { 
           users, 
           total: users.length,
-          exportedAt: new Date()
+          exportedAt: new Date(),
+          filters: { role, isActive }
         })
       );
 
     } catch (error) {
       logger.error('Export users error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
@@ -577,6 +637,10 @@ class UserController {
    * @private
    */
   convertToCSV(users) {
+    if (users.length === 0) {
+      return 'No data available';
+    }
+
     const headers = [
       'ID', 'Name', 'Email', 'Phone', 'Role', 
       'Is Active', 'Created At', 'Last Login'
@@ -584,17 +648,17 @@ class UserController {
 
     const rows = users.map(user => [
       user._id,
-      user.name,
-      user.email,
+      user.name || '',
+      user.email || '',
       user.phone || '',
-      user.role,
-      user.isActive,
-      user.createdAt.toISOString(),
-      user.lastLogin ? user.lastLogin.toISOString() : 'Never'
+      user.role || '',
+      user.isActive ? 'Yes' : 'No',
+      user.createdAt ? new Date(user.createdAt).toISOString() : '',
+      user.lastLogin ? new Date(user.lastLogin).toISOString() : 'Never'
     ]);
 
     const csvContent = [headers, ...rows]
-      .map(row => row.map(field => `"${field}"`).join(','))
+      .map(row => row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(','))
       .join('\n');
 
     return csvContent;
@@ -603,10 +667,20 @@ class UserController {
   /**
    * Activate/Deactivate user (Admin only)
    */
-  async toggleUserStatus(req, res) {
+  async toggleUserStatus(req, res, next) {
     try {
       const { id } = req.params;
       const { isActive } = req.body;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid user ID format', 400);
+      }
+
+      // Validate isActive parameter
+      if (typeof isActive !== 'boolean') {
+        throw new AppError('isActive must be a boolean value', 400);
+      }
 
       // Prevent admin from deactivating themselves
       if (id === req.user._id.toString() && !isActive) {
@@ -615,7 +689,10 @@ class UserController {
 
       const user = await User.findByIdAndUpdate(
         id,
-        { isActive },
+        { 
+          isActive,
+          ...(isActive ? {} : { deactivatedAt: new Date(), deactivatedBy: req.user._id })
+        },
         { new: true }
       ).select('-password');
 
@@ -631,6 +708,7 @@ class UserController {
           user: {
             id: user._id,
             email: user.email,
+            name: user.name,
             isActive: user.isActive
           }
         })
@@ -638,34 +716,32 @@ class UserController {
 
     } catch (error) {
       logger.error('Toggle user status error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
     }
   }
 
   /**
    * Get users by role
    */
-  async getUsersByRole(req, res) {
+  async getUsersByRole(req, res, next) {
     try {
       const { role } = req.params;
-      const { 
-        page = 1, 
-        limit = 10, 
-        isActive = true 
-      } = req.query;
+      const { page = 1, limit = 10, isActive = true } = req.query;
 
       if (!Object.values(USER_ROLES).includes(role)) {
         throw new AppError('Invalid role specified', 400);
       }
+
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
 
       const filter = { role, isActive: isActive === 'true' };
       const query = User.find(filter).select('-password');
       
       const result = await paginateResults(
         query,
-        parseInt(page),
-        parseInt(limit),
+        pageNum,
+        limitNum,
         'name',
         'asc'
       );
@@ -681,8 +757,59 @@ class UserController {
 
     } catch (error) {
       logger.error('Get users by role error:', error);
-      if (error instanceof AppError) throw error;
-      throw new AppError(RESPONSE_MESSAGES.ERROR.SERVER_ERROR, 500);
+      next(error);
+    }
+  }
+
+  /**
+   * Bulk update users (Admin only)
+   */
+  async bulkUpdateUsers(req, res, next) {
+    try {
+      const { userIds, updates } = req.body;
+
+      if (!Array.isArray(userIds) || userIds.length === 0) {
+        throw new AppError('User IDs array is required', 400);
+      }
+
+      if (!updates || typeof updates !== 'object') {
+        throw new AppError('Updates object is required', 400);
+      }
+
+      // Validate all user IDs
+      const invalidIds = userIds.filter(id => !id.match(/^[0-9a-fA-F]{24}$/));
+      if (invalidIds.length > 0) {
+        throw new AppError('Invalid user ID format detected', 400);
+      }
+
+      // Remove sensitive fields
+      const protectedFields = ['password', 'createdAt', 'updatedAt', '_id', 'email'];
+      protectedFields.forEach(field => delete updates[field]);
+
+      // Prevent updating self to inactive
+      if (updates.isActive === false && userIds.includes(req.user._id.toString())) {
+        throw new AppError('Cannot deactivate your own account in bulk update', 400);
+      }
+
+      const result = await User.updateMany(
+        { _id: { $in: userIds } },
+        { $set: updates },
+        { runValidators: true }
+      );
+
+      logger.info(`Bulk update performed on ${result.modifiedCount} users by ${req.user.email}`);
+
+      res.status(200).json(
+        createApiResponse(true, 'Bulk update completed successfully', {
+          matchedCount: result.matchedCount,
+          modifiedCount: result.modifiedCount,
+          updates
+        })
+      );
+
+    } catch (error) {
+      logger.error('Bulk update users error:', error);
+      next(error);
     }
   }
 }

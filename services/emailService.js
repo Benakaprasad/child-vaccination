@@ -1,6 +1,6 @@
 const nodemailer = require('nodemailer');
-// Fix: Import logger correctly - should destructure the logger object
-const { logger } = require('../utils/logger');
+// Fix: Import logger correctly from Winston setup
+const { logger, logNotification } = require('../utils/logger');
 
 class EmailService {
   constructor() {
@@ -12,41 +12,52 @@ class EmailService {
     try {
       // Email configuration based on environment
       const emailConfig = {
-        host: process.env.SMTP_HOST || 'localhost',
-        port: process.env.SMTP_PORT || 587,
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.SMTP_PORT) || 587,
         secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
         auth: {
-          user: process.env.SMTP_USER || '',
-          pass: process.env.SMTP_PASS || ''
+          user: process.env.SMTP_USER || process.env.EMAIL_USER || '',
+          pass: process.env.SMTP_PASS || process.env.EMAIL_PASS || ''
         }
       };
 
-      // Create transporter
-      this.transporter = nodemailer.createTransporter(emailConfig);
+      // Fix: Use createTransport (not createTransporter)
+      this.transporter = nodemailer.createTransport(emailConfig);
 
-      // Verify connection configuration
-      await this.transporter.verify();
-      
-      // Fix: Use logger correctly
-      logger.info('Email service initialized successfully');
+      // Verify connection configuration only if credentials provided
+      if (emailConfig.auth.user && emailConfig.auth.pass) {
+        await this.transporter.verify();
+        logger.info('Email service initialized and verified successfully', {
+          host: emailConfig.host,
+          port: emailConfig.port,
+          secure: emailConfig.secure,
+          type: 'email_service'
+        });
+      } else {
+        logger.warn('Email service initialized but no credentials provided', {
+          type: 'email_service'
+        });
+      }
       
     } catch (error) {
-      // Fix: Use logger correctly
-      logger.error('Failed to initialize email service:', error);
-      
-      // Fallback to console if needed
-      console.error('Email service initialization failed:', error.message);
+      logger.error('Failed to initialize email service', {
+        error: error.message,
+        stack: error.stack,
+        type: 'email_service'
+      });
     }
   }
 
   async sendEmail({ to, subject, html, text, attachments = [] }) {
+    const startTime = Date.now();
+    
     try {
       if (!this.transporter) {
         throw new Error('Email service not initialized');
       }
 
       const mailOptions = {
-        from: process.env.FROM_EMAIL || 'noreply@vaccination-tracker.com',
+        from: process.env.FROM_EMAIL || process.env.EMAIL_FROM || 'noreply@vaccination-tracker.com',
         to,
         subject,
         html,
@@ -55,12 +66,18 @@ class EmailService {
       };
 
       const result = await this.transporter.sendMail(mailOptions);
+      const duration = Date.now() - startTime;
       
       logger.info('Email sent successfully', {
         to,
         subject,
-        messageId: result.messageId
+        messageId: result.messageId,
+        duration: `${duration}ms`,
+        type: 'email_delivery'
       });
+
+      // Log notification success
+      logNotification('email', null, 'email', true);
 
       return {
         success: true,
@@ -69,11 +86,18 @@ class EmailService {
       };
 
     } catch (error) {
+      const duration = Date.now() - startTime;
+      
       logger.error('Failed to send email', {
         to,
         subject,
-        error: error.message
+        error: error.message,
+        duration: `${duration}ms`,
+        type: 'email_delivery'
       });
+
+      // Log notification failure
+      logNotification('email', null, 'email', false, error);
 
       return {
         success: false,
@@ -82,7 +106,7 @@ class EmailService {
     }
   }
 
-  async sendVaccinationReminder({ to, childName, vaccineName, scheduledDate, clinicInfo }) {
+  async sendVaccinationReminder({ to, childName, vaccineName, scheduledDate, clinicInfo, userId = null }) {
     const subject = `Vaccination Reminder: ${vaccineName} for ${childName}`;
     
     const html = `
@@ -120,10 +144,22 @@ class EmailService {
       </div>
     `;
 
-    return await this.sendEmail({ to, subject, html });
+    const result = await this.sendEmail({ to, subject, html });
+    
+    // Log business event
+    logger.info('Vaccination reminder sent', {
+      userId,
+      childName,
+      vaccineName,
+      scheduledDate,
+      success: result.success,
+      type: 'vaccination_reminder'
+    });
+
+    return result;
   }
 
-  async sendOverdueNotification({ to, childName, vaccineName, originalDate, daysOverdue }) {
+  async sendOverdueNotification({ to, childName, vaccineName, originalDate, daysOverdue, userId = null }) {
     const subject = `OVERDUE: ${vaccineName} vaccination for ${childName}`;
     
     const html = `
@@ -150,10 +186,22 @@ class EmailService {
       </div>
     `;
 
-    return await this.sendEmail({ to, subject, html });
+    const result = await this.sendEmail({ to, subject, html });
+    
+    // Log business event
+    logger.warn('Overdue vaccination notification sent', {
+      userId,
+      childName,
+      vaccineName,
+      daysOverdue,
+      success: result.success,
+      type: 'overdue_notification'
+    });
+
+    return result;
   }
 
-  async sendWelcomeEmail({ to, userName, resetLink }) {
+  async sendWelcomeEmail({ to, userName, resetLink, userId = null }) {
     const subject = 'Welcome to Child Vaccination Tracker';
     
     const html = `
@@ -189,11 +237,45 @@ class EmailService {
       </div>
     `;
 
-    return await this.sendEmail({ to, subject, html });
+    const result = await this.sendEmail({ to, subject, html });
+    
+    // Log business event
+    logger.info('Welcome email sent', {
+      userId,
+      userName,
+      email: to,
+      success: result.success,
+      type: 'welcome_email'
+    });
+
+    return result;
   }
 
   stripHtml(html) {
     return html.replace(/<[^>]*>/g, '');
+  }
+
+  // Test method for development
+  async testConnection() {
+    try {
+      if (!this.transporter) {
+        throw new Error('Email service not initialized');
+      }
+      
+      await this.transporter.verify();
+      logger.info('Email service connection test successful', {
+        type: 'email_service'
+      });
+      
+      return { success: true, message: 'Email service is working correctly' };
+    } catch (error) {
+      logger.error('Email service connection test failed', {
+        error: error.message,
+        type: 'email_service'
+      });
+      
+      return { success: false, error: error.message };
+    }
   }
 }
 

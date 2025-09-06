@@ -1,5 +1,6 @@
 const Notification = require('../models/Notification');
 const Child = require('../models/Child');
+const User = require('../models/User');
 const VaccinationRecord = require('../models/VaccinationRecord');
 const notificationService = require('../services/notificationService');
 const { 
@@ -15,15 +16,14 @@ const {
   NOTIFICATION_TYPES,
   DELIVERY_METHODS 
 } = require('../utils/constants');
-const logger = require('../utils/logger');
+const { logger } = require('../utils/logger');
+const { AppError } = require('../middleware/errorHandler');
 
 class NotificationController {
   /**
-   * Get notifications for current user
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Get notifications for the authenticated user
    */
-  async getNotifications(req, res) {
+  async getNotifications(req, res, next) {
     try {
       const {
         page = 1,
@@ -34,8 +34,13 @@ class NotificationController {
         isRead,
         priority
       } = req.query;
-      const userId = req.user.userId;
+      
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate pagination parameters
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
 
       let filter = {};
 
@@ -50,21 +55,29 @@ class NotificationController {
         ];
       }
 
-      // Apply additional filters
-      if (type) filter.type = type;
-      if (isRead !== undefined) filter.isRead = isRead === 'true';
-      if (priority) filter.priority = priority;
+      // Apply additional filters with validation
+      if (type && Object.values(NOTIFICATION_TYPES).includes(type)) {
+        filter.type = type;
+      }
+      
+      if (isRead !== undefined) {
+        filter.isRead = isRead === 'true';
+      }
+      
+      if (priority && ['low', 'medium', 'high', 'urgent'].includes(priority)) {
+        filter.priority = priority;
+      }
 
       const query = Notification.find(filter)
-        .populate('recipient', 'firstName lastName email')
-        .populate('relatedChild', 'firstName lastName')
-        .populate('relatedVaccination')
-        .populate('createdBy', 'firstName lastName');
+        .populate('recipient', 'name email')
+        .populate('relatedChild', 'name dateOfBirth')
+        .populate('relatedVaccination', 'vaccineName scheduledDate')
+        .populate('createdBy', 'name email');
 
       const result = await paginateResults(
         query,
-        parseInt(page),
-        parseInt(limit),
+        pageNum,
+        limitNum,
         sortBy,
         sortOrder
       );
@@ -80,48 +93,45 @@ class NotificationController {
 
     } catch (error) {
       logger.error('Get notifications error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Get notification by ID
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Get a specific notification by ID
    */
-  async getNotificationById(req, res) {
+  async getNotificationById(req, res, next) {
     try {
       const { id } = req.params;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid notification ID format', 400);
+      }
+
       const notification = await Notification.findById(id)
-        .populate('recipient', 'firstName lastName email')
-        .populate('relatedChild', 'firstName lastName dateOfBirth')
-        .populate('relatedVaccination')
-        .populate('createdBy', 'firstName lastName');
+        .populate('recipient', 'name email')
+        .populate('relatedChild', 'name dateOfBirth')
+        .populate('relatedVaccination', 'vaccineName scheduledDate')
+        .populate('createdBy', 'name email');
 
       if (!notification) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.NOTIFICATION_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.NOTIFICATION_NOT_FOUND || 'Notification not found', 404);
       }
 
       // Check permissions
-      const canAccess = notification.recipient._id.toString() === userId ||
-                       notification.assignedTo?.toString() === userId ||
+      const canAccess = notification.recipient._id.toString() === userId.toString() ||
+                       notification.assignedTo?.toString() === userId.toString() ||
                        (userRole === USER_ROLES.ADMIN);
 
       if (!canAccess) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.ACCESS_DENIED)
-        );
+        throw new AppError(ERROR_MESSAGES.ACCESS_DENIED || 'Access denied', 403);
       }
 
-      // Mark as read if recipient is viewing
-      if (notification.recipient._id.toString() === userId && !notification.isRead) {
+      // Mark as read if recipient is viewing and notification is unread
+      if (notification.recipient._id.toString() === userId.toString() && !notification.isRead) {
         notification.isRead = true;
         notification.readAt = new Date();
         await notification.save();
@@ -133,41 +143,65 @@ class NotificationController {
 
     } catch (error) {
       logger.error('Get notification by ID error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Create notification
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Create a new notification (Admin/Doctor only)
    */
-  async createNotification(req, res) {
+  async createNotification(req, res, next) {
     try {
       const notificationData = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
       // Only doctors and admins can create notifications manually
       if (userRole === USER_ROLES.PARENT) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.ACCESS_DENIED)
-        );
+        throw new AppError(ERROR_MESSAGES.ACCESS_DENIED || 'Access denied', 403);
       }
 
-      // Validate recipient exists
-      const recipient = await Child.findById(notificationData.recipient);
+      // Validate required fields
+      const requiredFields = ['recipient', 'type', 'title', 'message'];
+      const missingFields = requiredFields.filter(field => !notificationData[field]);
+      
+      if (missingFields.length > 0) {
+        throw new AppError(`Missing required fields: ${missingFields.join(', ')}`, 400);
+      }
+
+      // Validate notification type
+      if (!Object.values(NOTIFICATION_TYPES).includes(notificationData.type)) {
+        throw new AppError('Invalid notification type', 400);
+      }
+
+      // Validate recipient exists (could be User or Child depending on context)
+      let recipient;
+      if (notificationData.type === NOTIFICATION_TYPES.VACCINATION_REMINDER) {
+        recipient = await User.findById(notificationData.recipient);
+      } else {
+        recipient = await User.findById(notificationData.recipient);
+      }
+
       if (!recipient) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, 'Recipient not found')
+        throw new AppError('Recipient not found', 404);
+      }
+
+      // Validate delivery methods
+      if (notificationData.deliveryMethods) {
+        const validMethods = Object.values(DELIVERY_METHODS);
+        const invalidMethods = notificationData.deliveryMethods.filter(
+          method => !validMethods.includes(method)
         );
+        
+        if (invalidMethods.length > 0) {
+          throw new AppError(`Invalid delivery methods: ${invalidMethods.join(', ')}`, 400);
+        }
       }
 
       const notification = new Notification({
         ...notificationData,
-        createdBy: userId
+        createdBy: userId,
+        deliveryMethods: notificationData.deliveryMethods || [DELIVERY_METHODS.EMAIL]
       });
 
       await notification.save();
@@ -177,16 +211,16 @@ class NotificationController {
         await notificationService.sendNotification(notification._id);
       } catch (sendError) {
         logger.error('Failed to send notification:', sendError);
-        // Don't fail creation if sending fails
+        // Don't fail creation if sending fails, but log the error
       }
 
       await notification.populate([
-        { path: 'recipient', select: 'firstName lastName email' },
-        { path: 'relatedChild', select: 'firstName lastName' },
-        { path: 'createdBy', select: 'firstName lastName' }
+        { path: 'recipient', select: 'name email' },
+        { path: 'relatedChild', select: 'name' },
+        { path: 'createdBy', select: 'name email' }
       ]);
 
-      logger.info(`Notification created: ${notification._id} for ${recipient.email}`);
+      logger.info(`Notification created: ${notification._id} for ${recipient.email || recipient.name}`);
 
       res.status(HTTP_STATUS.CREATED).json(
         createApiResponse(true, 'Notification created successfully', { notification })
@@ -194,34 +228,31 @@ class NotificationController {
 
     } catch (error) {
       logger.error('Create notification error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Mark notification as read
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Mark a notification as read
    */
-  async markAsRead(req, res) {
+  async markAsRead(req, res, next) {
     try {
       const { id } = req.params;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid notification ID format', 400);
+      }
 
       const notification = await Notification.findById(id);
       if (!notification) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.NOTIFICATION_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.NOTIFICATION_NOT_FOUND || 'Notification not found', 404);
       }
 
       // Check if user is the recipient
-      if (notification.recipient.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.ACCESS_DENIED)
-        );
+      if (notification.recipient.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.ACCESS_DENIED || 'Access denied', 403);
       }
 
       if (notification.isRead) {
@@ -239,34 +270,37 @@ class NotificationController {
       );
 
     } catch (error) {
-      logger.error('Mark notification as read error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      logger.error('Mark as read error:', error);
+      next(error);
     }
   }
 
   /**
-   * Mark notification as unread
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Mark a notification as unread
    */
-  async markAsUnread(req, res) {
+  async markAsUnread(req, res, next) {
     try {
       const { id } = req.params;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid notification ID format', 400);
+      }
 
       const notification = await Notification.findById(id);
       if (!notification) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.NOTIFICATION_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.NOTIFICATION_NOT_FOUND || 'Notification not found', 404);
       }
 
       // Check if user is the recipient
-      if (notification.recipient.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.ACCESS_DENIED)
+      if (notification.recipient.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.ACCESS_DENIED || 'Access denied', 403);
+      }
+
+      if (!notification.isRead) {
+        return res.status(HTTP_STATUS.OK).json(
+          createApiResponse(true, 'Notification is already unread', { notification })
         );
       }
 
@@ -279,21 +313,17 @@ class NotificationController {
       );
 
     } catch (error) {
-      logger.error('Mark notification as unread error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      logger.error('Mark as unread error:', error);
+      next(error);
     }
   }
 
   /**
-   * Mark all notifications as read
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Mark all notifications as read for the authenticated user
    */
-  async markAllAsRead(req, res) {
+  async markAllAsRead(req, res, next) {
     try {
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
 
       const result = await Notification.updateMany(
         { recipient: userId, isRead: false },
@@ -302,6 +332,8 @@ class NotificationController {
           readAt: new Date() 
         }
       );
+
+      logger.info(`User ${userId} marked ${result.modifiedCount} notifications as read`);
 
       res.status(HTTP_STATUS.OK).json(
         createApiResponse(
@@ -312,41 +344,38 @@ class NotificationController {
       );
 
     } catch (error) {
-      logger.error('Mark all notifications as read error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      logger.error('Mark all as read error:', error);
+      next(error);
     }
   }
 
   /**
-   * Delete notification
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Delete a notification
    */
-  async deleteNotification(req, res) {
+  async deleteNotification(req, res, next) {
     try {
       const { id } = req.params;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid notification ID format', 400);
+      }
 
       const notification = await Notification.findById(id);
       if (!notification) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.NOTIFICATION_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.NOTIFICATION_NOT_FOUND || 'Notification not found', 404);
       }
 
       // Only admin or notification recipient can delete
-      if (userRole !== USER_ROLES.ADMIN && notification.recipient.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.ACCESS_DENIED)
-        );
+      if (userRole !== USER_ROLES.ADMIN && notification.recipient.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.ACCESS_DENIED || 'Access denied', 403);
       }
 
       await Notification.findByIdAndDelete(id);
 
-      logger.info(`Notification deleted: ${id} by user ${req.user.email}`);
+      logger.info(`Notification deleted: ${id} by user ${req.user.email || userId}`);
 
       res.status(HTTP_STATUS.OK).json(
         createApiResponse(true, 'Notification deleted successfully')
@@ -354,20 +383,16 @@ class NotificationController {
 
     } catch (error) {
       logger.error('Delete notification error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Get unread notification count
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Get count of unread notifications for the authenticated user
    */
-  async getUnreadCount(req, res) {
+  async getUnreadCount(req, res, next) {
     try {
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
 
       const count = await Notification.countDocuments({
         recipient: userId,
@@ -382,20 +407,16 @@ class NotificationController {
 
     } catch (error) {
       logger.error('Get unread count error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Get notification statistics
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Get notification statistics for the authenticated user
    */
-  async getNotificationStatistics(req, res) {
+  async getNotificationStatistics(req, res, next) {
     try {
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
       let matchStage = {};
@@ -410,30 +431,50 @@ class NotificationController {
         ];
       }
 
-      const stats = await Notification.aggregate([
-        { $match: matchStage },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            unread: { $sum: { $cond: [{ $eq: ['$isRead', false] }, 1, 0] } },
-            read: { $sum: { $cond: [{ $eq: ['$isRead', true] }, 1, 0] } },
-            byType: {
-              $push: {
-                type: '$type',
-                priority: '$priority',
-                isRead: '$isRead'
+      const [stats, recentStats] = await Promise.all([
+        // Overall statistics
+        Notification.aggregate([
+          { $match: matchStage },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              unread: { $sum: { $cond: [{ $eq: ['$isRead', false] }, 1, 0] } },
+              read: { $sum: { $cond: [{ $eq: ['$isRead', true] }, 1, 0] } },
+              byType: {
+                $push: {
+                  type: '$type',
+                  priority: '$priority',
+                  isRead: '$isRead'
+                }
               }
             }
           }
-        }
+        ]),
+        
+        // Recent statistics (last 7 days)
+        Notification.aggregate([
+          { 
+            $match: {
+              ...matchStage,
+              createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              recentTotal: { $sum: 1 },
+              recentUnread: { $sum: { $cond: [{ $eq: ['$isRead', false] }, 1, 0] } }
+            }
+          }
+        ])
       ]);
 
       // Group by type and priority
       const typeStats = {};
       const priorityStats = {};
 
-      if (stats.length > 0) {
+      if (stats.length > 0 && stats[0].byType) {
         stats[0].byType.forEach(notification => {
           // Type statistics
           if (!typeStats[notification.type]) {
@@ -463,7 +504,9 @@ class NotificationController {
         overview: {
           total: stats[0]?.total || 0,
           unread: stats[0]?.unread || 0,
-          read: stats[0]?.read || 0
+          read: stats[0]?.read || 0,
+          recentTotal: recentStats[0]?.recentTotal || 0,
+          recentUnread: recentStats[0]?.recentUnread || 0
         },
         byType: typeStats,
         byPriority: priorityStats
@@ -475,28 +518,37 @@ class NotificationController {
 
     } catch (error) {
       logger.error('Get notification statistics error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Update notification preferences
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Update notification preferences for the authenticated user
    */
-  async updateNotificationPreferences(req, res) {
+  async updateNotificationPreferences(req, res, next) {
     try {
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const preferences = req.body;
 
-      // Update user's notification preferences
-      const user = await require('../models/User').findById(userId);
-      if (!user) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, 'User not found')
+      if (!preferences || typeof preferences !== 'object') {
+        throw new AppError('Valid preferences object is required', 400);
+      }
+
+      // Validate delivery methods if provided
+      if (preferences.deliveryMethods) {
+        const validMethods = Object.values(DELIVERY_METHODS);
+        const invalidMethods = preferences.deliveryMethods.filter(
+          method => !validMethods.includes(method)
         );
+        
+        if (invalidMethods.length > 0) {
+          throw new AppError(`Invalid delivery methods: ${invalidMethods.join(', ')}`, 400);
+        }
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new AppError('User not found', 404);
       }
 
       user.notificationPreferences = {
@@ -506,7 +558,7 @@ class NotificationController {
 
       await user.save();
 
-      logger.info(`Notification preferences updated for user: ${user.email}`);
+      logger.info(`Notification preferences updated for user: ${user.email || userId}`);
 
       res.status(HTTP_STATUS.OK).json(
         createApiResponse(
@@ -518,37 +570,47 @@ class NotificationController {
 
     } catch (error) {
       logger.error('Update notification preferences error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Send test notification
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Send a test notification (Admin only)
    */
-  async sendTestNotification(req, res) {
+  async sendTestNotification(req, res, next) {
     try {
-      const { recipient, deliveryMethod } = req.body;
-      const userId = req.user.userId;
+      const { recipient, deliveryMethod, message } = req.body;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
       // Only admins can send test notifications
       if (userRole !== USER_ROLES.ADMIN) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.ACCESS_DENIED)
-        );
+        throw new AppError(ERROR_MESSAGES.ACCESS_DENIED || 'Access denied', 403);
+      }
+
+      // Validate recipient
+      if (!recipient || !recipient.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Valid recipient ID is required', 400);
+      }
+
+      // Validate delivery method
+      if (deliveryMethod && !Object.values(DELIVERY_METHODS).includes(deliveryMethod)) {
+        throw new AppError('Invalid delivery method', 400);
+      }
+
+      // Check if recipient exists
+      const recipientUser = await User.findById(recipient);
+      if (!recipientUser) {
+        throw new AppError('Recipient not found', 404);
       }
 
       const testNotification = new Notification({
         recipient,
-        type: NOTIFICATION_TYPES.SYSTEM,
+        type: NOTIFICATION_TYPES.SYSTEM || 'system',
         title: 'Test Notification',
-        message: 'This is a test notification to verify delivery settings.',
+        message: message || 'This is a test notification to verify delivery settings.',
         priority: 'low',
-        deliveryMethods: [deliveryMethod || DELIVERY_METHODS.EMAIL],
+        deliveryMethods: [deliveryMethod || DELIVERY_METHODS.EMAIL || 'email'],
         createdBy: userId
       });
 
@@ -558,40 +620,45 @@ class NotificationController {
       try {
         await notificationService.sendNotification(testNotification._id);
         
+        logger.info(`Test notification sent: ${testNotification._id} to ${recipientUser.email}`);
+        
         res.status(HTTP_STATUS.OK).json(
           createApiResponse(true, 'Test notification sent successfully', { 
-            notificationId: testNotification._id 
+            notificationId: testNotification._id,
+            recipient: {
+              id: recipientUser._id,
+              email: recipientUser.email,
+              name: recipientUser.name
+            }
           })
         );
       } catch (sendError) {
         logger.error('Failed to send test notification:', sendError);
-        res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-          createApiResponse(false, 'Failed to send test notification')
-        );
+        throw new AppError('Failed to send test notification', 500);
       }
 
     } catch (error) {
       logger.error('Send test notification error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Bulk mark notifications as read
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Mark multiple notifications as read
    */
-  async bulkMarkAsRead(req, res) {
+  async bulkMarkAsRead(req, res, next) {
     try {
       const { notificationIds } = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
 
       if (!Array.isArray(notificationIds) || notificationIds.length === 0) {
-        return res.status(HTTP_STATUS.BAD_REQUEST).json(
-          createApiResponse(false, 'Invalid notification IDs provided')
-        );
+        throw new AppError('Valid notification IDs array is required', 400);
+      }
+
+      // Validate all IDs
+      const invalidIds = notificationIds.filter(id => !id.match(/^[0-9a-fA-F]{24}$/));
+      if (invalidIds.length > 0) {
+        throw new AppError('Invalid notification ID format detected', 400);
       }
 
       const result = await Notification.updateMany(
@@ -606,37 +673,42 @@ class NotificationController {
         }
       );
 
+      logger.info(`Bulk mark as read: ${result.modifiedCount} notifications by user ${userId}`);
+
       res.status(HTTP_STATUS.OK).json(
         createApiResponse(
           true,
           `${result.modifiedCount} notifications marked as read`,
-          { updatedCount: result.modifiedCount }
+          { 
+            updatedCount: result.modifiedCount,
+            requestedCount: notificationIds.length
+          }
         )
       );
 
     } catch (error) {
       logger.error('Bulk mark as read error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Bulk delete notifications
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Delete multiple notifications
    */
-  async bulkDeleteNotifications(req, res) {
+  async bulkDeleteNotifications(req, res, next) {
     try {
       const { notificationIds } = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
       if (!Array.isArray(notificationIds) || notificationIds.length === 0) {
-        return res.status(HTTP_STATUS.BAD_REQUEST).json(
-          createApiResponse(false, 'Invalid notification IDs provided')
-        );
+        throw new AppError('Valid notification IDs array is required', 400);
+      }
+
+      // Validate all IDs
+      const invalidIds = notificationIds.filter(id => !id.match(/^[0-9a-fA-F]{24}$/));
+      if (invalidIds.length > 0) {
+        throw new AppError('Invalid notification ID format detected', 400);
       }
 
       let filter = { _id: { $in: notificationIds } };
@@ -648,57 +720,112 @@ class NotificationController {
 
       const result = await Notification.deleteMany(filter);
 
-      logger.info(`Bulk delete notifications: ${result.deletedCount} deleted by ${req.user.email}`);
+      logger.info(`Bulk delete notifications: ${result.deletedCount} deleted by ${req.user.email || userId}`);
 
       res.status(HTTP_STATUS.OK).json(
         createApiResponse(
           true,
           `${result.deletedCount} notifications deleted`,
-          { deletedCount: result.deletedCount }
+          { 
+            deletedCount: result.deletedCount,
+            requestedCount: notificationIds.length
+          }
         )
       );
 
     } catch (error) {
       logger.error('Bulk delete notifications error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Get recent notifications (last 30 days)
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Get recent notifications for the authenticated user
    */
-  async getRecentNotifications(req, res) {
+  async getRecentNotifications(req, res, next) {
     try {
-      const { limit = 10 } = req.query;
-      const userId = req.user.userId;
+      const { limit = 10, days = 30 } = req.query;
+      const userId = req.user._id || req.user.userId;
 
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      // Validate and sanitize inputs
+      const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+      const daysNum = Math.min(90, Math.max(1, parseInt(days)));
+
+      const dateThreshold = new Date();
+      dateThreshold.setDate(dateThreshold.getDate() - daysNum);
 
       const notifications = await Notification.find({
         recipient: userId,
-        createdAt: { $gte: thirtyDaysAgo }
+        createdAt: { $gte: dateThreshold }
       })
-      .populate('relatedChild', 'firstName lastName')
+      .populate('relatedChild', 'name dateOfBirth')
+      .populate('relatedVaccination', 'vaccineName scheduledDate')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit));
+      .limit(limitNum)
+      .lean();
 
       res.status(HTTP_STATUS.OK).json(
         createApiResponse(true, 'Recent notifications retrieved successfully', {
           notifications,
-          total: notifications.length
+          total: notifications.length,
+          dateRange: {
+            from: dateThreshold,
+            to: new Date(),
+            days: daysNum
+          }
         })
       );
 
     } catch (error) {
       logger.error('Get recent notifications error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
+      next(error);
+    }
+  }
+
+  /**
+   * Get notifications by type
+   */
+  async getNotificationsByType(req, res, next) {
+    try {
+      const { type } = req.params;
+      const { page = 1, limit = 10 } = req.query;
+      const userId = req.user._id || req.user.userId;
+
+      if (!Object.values(NOTIFICATION_TYPES).includes(type)) {
+        throw new AppError('Invalid notification type', 400);
+      }
+
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+
+      const filter = { recipient: userId, type };
+      const query = Notification.find(filter)
+        .populate('relatedChild', 'name')
+        .populate('relatedVaccination', 'vaccineName scheduledDate');
+
+      const result = await paginateResults(
+        query,
+        pageNum,
+        limitNum,
+        'createdAt',
+        'desc'
       );
+
+      res.status(HTTP_STATUS.OK).json(
+        createApiResponse(
+          true,
+          `${type} notifications retrieved successfully`,
+          result.data,
+          { 
+            pagination: result.pagination,
+            type 
+          }
+        )
+      );
+
+    } catch (error) {
+      logger.error('Get notifications by type error:', error);
+      next(error);
     }
   }
 }

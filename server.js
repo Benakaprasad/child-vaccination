@@ -1,3 +1,4 @@
+
 console.log('=== SERVER STARTUP DEBUG ===');
 console.log('1. Starting server initialization...');
 
@@ -252,6 +253,10 @@ try {
 } catch (err) {
   console.log('   ✗ Vaccination scheduler failed:', err.message);
 }
+app.use((req, res, next) => {
+  console.log('Middleware called, next is:', typeof next);
+  next();
+});
 
 // Import routes with error handling
 console.log('12. Loading routes...');

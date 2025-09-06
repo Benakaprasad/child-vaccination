@@ -223,6 +223,7 @@ const sensitiveOperationLimit = (windowMs = 15 * 60 * 1000, max = 5) => {
 };
 
 module.exports = {
+  auth: authMiddleware, // Add this alias
   authMiddleware,
   requireRole,
   requireAdmin,

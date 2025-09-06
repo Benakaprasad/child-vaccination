@@ -2,10 +2,8 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const userController = require('../controllers/userController');
-const auth = require('../middleware/auth');
-const { requireRole } = require('../middleware/auth');
+const { auth, requireRole } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
-const { userUpdateSchema, paginationSchema } = require('../utils/validators');
 const { USER_ROLES, FILE_UPLOAD } = require('../utils/constants');
 
 const router = express.Router();
@@ -45,8 +43,23 @@ const upload = multer({
 router.get(
   '/',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
-  validateRequest(paginationSchema, 'query'),
+  requireRole(USER_ROLES.ADMIN),
+  // FIXED: Changed from validateRequest(paginationSchema, 'query') to proper format
+  validateRequest({
+    query: {
+      page: {
+        type: 'number',
+        min: 1,
+        optional: true
+      },
+      limit: {
+        type: 'number',
+        min: 1,
+        max: 100,
+        optional: true
+      }
+    }
+  }),
   userController.getAllUsers
 );
 
@@ -69,7 +82,7 @@ router.get(
 router.get(
   '/statistics',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   userController.getUserStatistics
 );
 
@@ -81,7 +94,7 @@ router.get(
 router.get(
   '/search',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     query: {
       q: {
@@ -113,7 +126,7 @@ router.get(
 router.get(
   '/role/:role',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     params: {
       role: {
@@ -151,7 +164,7 @@ router.get(
 router.get(
   '/export',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     query: {
       format: {
@@ -244,7 +257,53 @@ router.put(
       }
     }
   }),
-  validateRequest(userUpdateSchema),
+  // FIXED: Changed from validateRequest(userUpdateSchema) to inline schema
+  validateRequest({
+    body: {
+      firstName: {
+        type: 'string',
+        minLength: 2,
+        maxLength: 50,
+        optional: true
+      },
+      lastName: {
+        type: 'string',
+        minLength: 2,
+        maxLength: 50,
+        optional: true
+      },
+      email: {
+        type: 'string',
+        format: 'email',
+        optional: true
+      },
+      phoneNumber: {
+        type: 'string',
+        pattern: '^[+]?[0-9]{10,15}$',
+        optional: true
+      },
+      address: {
+        type: 'object',
+        optional: true,
+        properties: {
+          street: { type: 'string', maxLength: 100 },
+          city: { type: 'string', maxLength: 50 },
+          state: { type: 'string', maxLength: 50 },
+          zipCode: { type: 'string', pattern: '^[0-9]{5,10}$' },
+          country: { type: 'string', maxLength: 50 }
+        }
+      },
+      emergencyContact: {
+        type: 'object',
+        optional: true,
+        properties: {
+          name: { type: 'string', maxLength: 100 },
+          relationship: { type: 'string', maxLength: 50 },
+          phoneNumber: { type: 'string', pattern: '^[+]?[0-9]{10,15}$' }
+        }
+      }
+    }
+  }),
   userController.updateUser
 );
 
@@ -256,7 +315,7 @@ router.put(
 router.delete(
   '/:id',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -298,7 +357,7 @@ router.post(
 router.get(
   '/:id/activity',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -342,7 +401,7 @@ router.get(
 router.patch(
   '/:id/toggle-status',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -361,7 +420,7 @@ router.patch(
   userController.toggleUserStatus
 );
 
-// Error handling middleware for multer
+// FIXED: Error handling middleware for multer - correct function signature
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
@@ -378,7 +437,7 @@ router.use((error, req, res, next) => {
     }
   }
   
-  if (error.message.includes('Invalid file type')) {
+  if (error.message && error.message.includes('Invalid file type')) {
     return res.status(400).json({
       success: false,
       message: error.message

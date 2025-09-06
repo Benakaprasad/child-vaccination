@@ -1,9 +1,7 @@
 const express = require('express');
 const vaccineController = require('../controllers/vaccineController');
-const auth = require('../middleware/auth');
-const { requireRole } = require('../middleware/auth');
+const { auth, requireRole } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
-const { vaccineSchema, vaccineUpdateSchema, paginationSchema } = require('../utils/validators');
 const { USER_ROLES, VACCINE_TYPES } = require('../utils/constants');
 
 const router = express.Router();
@@ -104,7 +102,7 @@ router.get(
 router.get(
   '/statistics',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   vaccineController.getVaccineStatistics
 );
 
@@ -173,8 +171,84 @@ router.get(
 router.post(
   '/',
   auth,
-  requireRole([USER_ROLES.DOCTOR, USER_ROLES.ADMIN]),
-  validateRequest(vaccineSchema),
+  requireRole(USER_ROLES.DOCTOR, USER_ROLES.ADMIN),
+  // FIXED: Changed from validateRequest(vaccineSchema) to inline schema
+  validateRequest({
+    body: {
+      name: {
+        type: 'string',
+        required: true,
+        maxLength: 100
+      },
+      genericName: {
+        type: 'string',
+        optional: true,
+        maxLength: 100
+      },
+      manufacturer: {
+        type: 'string',
+        required: true,
+        maxLength: 100
+      },
+      type: {
+        type: 'string',
+        enum: Object.values(VACCINE_TYPES),
+        required: true
+      },
+      description: {
+        type: 'string',
+        maxLength: 1000,
+        optional: true
+      },
+      ageRanges: {
+        type: 'array',
+        required: true,
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            minAge: { type: 'number', min: 0 },
+            maxAge: { type: 'number', min: 0 },
+            unit: { type: 'string', enum: ['days', 'weeks', 'months', 'years'] }
+          }
+        }
+      },
+      doses: {
+        type: 'array',
+        required: true,
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            doseNumber: { type: 'number', min: 1 },
+            ageAtDose: { type: 'number', min: 0 },
+            unit: { type: 'string', enum: ['days', 'weeks', 'months', 'years'] },
+            intervalFromPrevious: { type: 'number', min: 0, optional: true }
+          }
+        }
+      },
+      sideEffects: {
+        type: 'array',
+        optional: true,
+        items: {
+          type: 'string',
+          maxLength: 200
+        }
+      },
+      contraindications: {
+        type: 'array',
+        optional: true,
+        items: {
+          type: 'string',
+          maxLength: 200
+        }
+      },
+      isActive: {
+        type: 'boolean',
+        optional: true
+      }
+    }
+  }),
   vaccineController.createVaccine
 );
 
@@ -206,7 +280,7 @@ router.get(
 router.put(
   '/:id',
   auth,
-  requireRole([USER_ROLES.DOCTOR, USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.DOCTOR, USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -216,7 +290,83 @@ router.put(
       }
     }
   }),
-  validateRequest(vaccineUpdateSchema),
+  // FIXED: Changed from validateRequest(vaccineUpdateSchema) to inline schema
+  validateRequest({
+    body: {
+      name: {
+        type: 'string',
+        maxLength: 100,
+        optional: true
+      },
+      genericName: {
+        type: 'string',
+        maxLength: 100,
+        optional: true
+      },
+      manufacturer: {
+        type: 'string',
+        maxLength: 100,
+        optional: true
+      },
+      type: {
+        type: 'string',
+        enum: Object.values(VACCINE_TYPES),
+        optional: true
+      },
+      description: {
+        type: 'string',
+        maxLength: 1000,
+        optional: true
+      },
+      ageRanges: {
+        type: 'array',
+        optional: true,
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            minAge: { type: 'number', min: 0 },
+            maxAge: { type: 'number', min: 0 },
+            unit: { type: 'string', enum: ['days', 'weeks', 'months', 'years'] }
+          }
+        }
+      },
+      doses: {
+        type: 'array',
+        optional: true,
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            doseNumber: { type: 'number', min: 1 },
+            ageAtDose: { type: 'number', min: 0 },
+            unit: { type: 'string', enum: ['days', 'weeks', 'months', 'years'] },
+            intervalFromPrevious: { type: 'number', min: 0, optional: true }
+          }
+        }
+      },
+      sideEffects: {
+        type: 'array',
+        optional: true,
+        items: {
+          type: 'string',
+          maxLength: 200
+        }
+      },
+      contraindications: {
+        type: 'array',
+        optional: true,
+        items: {
+          type: 'string',
+          maxLength: 200
+        }
+      },
+      isActive: {
+        type: 'boolean',
+        optional: true
+      }
+    }
+  }),
   vaccineController.updateVaccine
 );
 
@@ -228,7 +378,7 @@ router.put(
 router.delete(
   '/:id',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -249,7 +399,7 @@ router.delete(
 router.patch(
   '/:id/toggle-status',
   auth,
-  requireRole([USER_ROLES.DOCTOR, USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.DOCTOR, USER_ROLES.ADMIN),
   validateRequest({
     params: {
       id: {
@@ -296,7 +446,7 @@ router.get(
 router.post(
   '/bulk-create',
   auth,
-  requireRole([USER_ROLES.ADMIN]),
+  requireRole(USER_ROLES.ADMIN),
   validateRequest({
     body: {
       vaccines: {
@@ -304,7 +454,83 @@ router.post(
         required: true,
         minItems: 1,
         maxItems: 50,
-        items: vaccineSchema.body
+        items: {
+          type: 'object',
+          properties: {
+            name: {
+              type: 'string',
+              required: true,
+              maxLength: 100
+            },
+            genericName: {
+              type: 'string',
+              optional: true,
+              maxLength: 100
+            },
+            manufacturer: {
+              type: 'string',
+              required: true,
+              maxLength: 100
+            },
+            type: {
+              type: 'string',
+              enum: Object.values(VACCINE_TYPES),
+              required: true
+            },
+            description: {
+              type: 'string',
+              maxLength: 1000,
+              optional: true
+            },
+            ageRanges: {
+              type: 'array',
+              required: true,
+              minItems: 1,
+              items: {
+                type: 'object',
+                properties: {
+                  minAge: { type: 'number', min: 0 },
+                  maxAge: { type: 'number', min: 0 },
+                  unit: { type: 'string', enum: ['days', 'weeks', 'months', 'years'] }
+                }
+              }
+            },
+            doses: {
+              type: 'array',
+              required: true,
+              minItems: 1,
+              items: {
+                type: 'object',
+                properties: {
+                  doseNumber: { type: 'number', min: 1 },
+                  ageAtDose: { type: 'number', min: 0 },
+                  unit: { type: 'string', enum: ['days', 'weeks', 'months', 'years'] },
+                  intervalFromPrevious: { type: 'number', min: 0, optional: true }
+                }
+              }
+            },
+            sideEffects: {
+              type: 'array',
+              optional: true,
+              items: {
+                type: 'string',
+                maxLength: 200
+              }
+            },
+            contraindications: {
+              type: 'array',
+              optional: true,
+              items: {
+                type: 'string',
+                maxLength: 200
+              }
+            },
+            isActive: {
+              type: 'boolean',
+              optional: true
+            }
+          }
+        }
       }
     }
   }),
@@ -319,7 +545,7 @@ router.post(
 router.get(
   '/:id/usage-statistics',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     params: {
       id: {

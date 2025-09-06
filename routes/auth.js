@@ -1,7 +1,8 @@
 const express = require('express');
+const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const authController = require('../controllers/authController');
-const auth = require('../middleware/auth');
+const { auth, requireRole } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
 const { 
   userRegistrationSchema,
@@ -9,8 +10,11 @@ const {
   userUpdateSchema
 } = require('../utils/validators');
 
-const router = express.Router();
-
+function debugMiddleware(req, res, next) {
+  console.log('Middleware called, next is', typeof next);
+  next();
+}
+router.use(debugMiddleware);
 // Rate limiting for auth endpoints
 const authLimiter = rateLimit({
   windowMs: process.env.AUTH_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000, // 15 minutes
@@ -178,6 +182,15 @@ router.post(
 router.get(
   '/verify-email/:token',
   generalAuthLimiter,
+  validateRequest({
+    params: {
+      token: {
+        type: 'string',
+        required: true,
+        minLength: 1
+      }
+    }
+  }),
   authController.verifyEmail
 );
 

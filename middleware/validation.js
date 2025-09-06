@@ -404,8 +404,226 @@ const validateFileUpload = (req, res, next) => {
   next();
 };
 
+// Custom object-based validation middleware to match your route expectations
+const objectValidation = (schema) => {
+  return (req, res, next) => {
+    const errors = [];
+
+    // Validate body
+    if (schema.body) {
+      const bodyErrors = validateObject(req.body, schema.body, 'body');
+      errors.push(...bodyErrors);
+    }
+
+    // Validate query parameters
+    if (schema.query) {
+      const queryErrors = validateObject(req.query, schema.query, 'query');
+      errors.push(...queryErrors);
+    }
+
+    // Validate params
+    if (schema.params) {
+      const paramErrors = validateObject(req.params, schema.params, 'params');
+      errors.push(...paramErrors);
+    }
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors
+      });
+    }
+
+    next();
+  };
+};
+
+// Helper function to validate objects
+const validateObject = (data, schema, location) => {
+  const errors = [];
+  
+  for (const [field, rules] of Object.entries(schema)) {
+    const value = data[field];
+    const isRequired = rules.required === true;
+    const isOptional = rules.optional === true || !isRequired;
+
+    // Check required fields
+    if (isRequired && (value === undefined || value === null || value === '')) {
+      errors.push({
+        field: `${location}.${field}`,
+        message: `${field} is required`,
+        value: value
+      });
+      continue;
+    }
+
+    // Skip validation for optional fields that are undefined
+    if (isOptional && (value === undefined || value === null)) {
+      continue;
+    }
+
+    // Type validation
+    if (rules.type && value !== undefined) {
+      if (!validateType(value, rules.type)) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be of type ${rules.type}`,
+          value: value
+        });
+        continue;
+      }
+    }
+
+    // String validations
+    if (rules.type === 'string' && typeof value === 'string') {
+      if (rules.minLength && value.length < rules.minLength) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be at least ${rules.minLength} characters long`,
+          value: value
+        });
+      }
+
+      if (rules.maxLength && value.length > rules.maxLength) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be no more than ${rules.maxLength} characters long`,
+          value: value
+        });
+      }
+
+      if (rules.pattern && !new RegExp(rules.pattern).test(value)) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} format is invalid`,
+          value: value
+        });
+      }
+
+      if (rules.enum && !rules.enum.includes(value)) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be one of: ${rules.enum.join(', ')}`,
+          value: value
+        });
+      }
+
+      if (rules.format === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be a valid email address`,
+          value: value
+        });
+      }
+
+      if (rules.format === 'date' && isNaN(Date.parse(value))) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be a valid date`,
+          value: value
+        });
+      }
+
+      if (rules.format === 'date-time' && isNaN(Date.parse(value))) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be a valid date-time`,
+          value: value
+        });
+      }
+    }
+
+    // Number validations
+    if (rules.type === 'number' && typeof value === 'number') {
+      if (rules.min !== undefined && value < rules.min) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be at least ${rules.min}`,
+          value: value
+        });
+      }
+
+      if (rules.max !== undefined && value > rules.max) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must be no more than ${rules.max}`,
+          value: value
+        });
+      }
+    }
+
+    // Array validations
+    if (rules.type === 'array' && Array.isArray(value)) {
+      if (rules.minItems && value.length < rules.minItems) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must have at least ${rules.minItems} items`,
+          value: value
+        });
+      }
+
+      if (rules.maxItems && value.length > rules.maxItems) {
+        errors.push({
+          field: `${location}.${field}`,
+          message: `${field} must have no more than ${rules.maxItems} items`,
+          value: value
+        });
+      }
+
+      // Validate array items
+      if (rules.items && rules.items.type) {
+        value.forEach((item, index) => {
+          if (!validateType(item, rules.items.type)) {
+            errors.push({
+              field: `${location}.${field}[${index}]`,
+              message: `${field} items must be of type ${rules.items.type}`,
+              value: item
+            });
+          }
+
+          if (rules.items.enum && !rules.items.enum.includes(item)) {
+            errors.push({
+              field: `${location}.${field}[${index}]`,
+              message: `${field} items must be one of: ${rules.items.enum.join(', ')}`,
+              value: item
+            });
+          }
+
+          if (rules.items.pattern && typeof item === 'string' && !new RegExp(rules.items.pattern).test(item)) {
+            errors.push({
+              field: `${location}.${field}[${index}]`,
+              message: `${field} item format is invalid`,
+              value: item
+            });
+          }
+        });
+      }
+    }
+  }
+
+  return errors;
+};
+
+// Helper function to validate types
+const validateType = (value, expectedType) => {
+  switch (expectedType) {
+    case 'string':
+      return typeof value === 'string';
+    case 'number':
+      return typeof value === 'number' && !isNaN(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'array':
+      return Array.isArray(value);
+    case 'object':
+      return typeof value === 'object' && value !== null && !Array.isArray(value);
+    default:
+      return true;
+  }
+};
 module.exports = {
-  validateRequest, // FIX: Export this for server.js compatibility
+  validateRequest, // express-validator wrapper
   handleValidationErrors,
   validateUserRegistration,
   validateUserLogin,
@@ -418,5 +636,6 @@ module.exports = {
   validatePagination,
   validateDateRange,
   validateNotification,
-  validateFileUpload
+  validateFileUpload,
+  objectValidation // ✅ <-- THIS WAS MISSING
 };

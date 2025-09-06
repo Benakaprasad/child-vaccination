@@ -15,15 +15,14 @@ const {
   USER_ROLES,
   VACCINATION_STATUS 
 } = require('../utils/constants');
-const logger = require('../utils/logger');
+const { logger } = require('../utils/logger');
+const { AppError } = require('../middleware/errorHandler');
 
 class VaccinationRecordController {
   /**
    * Get vaccination records with filtering and pagination
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
-  async getVaccinationRecords(req, res) {
+  async getVaccinationRecords(req, res, next) {
     try {
       const {
         page = 1,
@@ -36,8 +35,13 @@ class VaccinationRecordController {
         startDate,
         endDate
       } = req.query;
-      const userId = req.user.userId;
+      
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate pagination parameters
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
 
       let filter = {};
 
@@ -47,15 +51,40 @@ class VaccinationRecordController {
         filter.child = { $in: children.map(child => child._id) };
       }
 
-      // Apply additional filters
-      if (childId) filter.child = childId;
-      if (vaccineId) filter.vaccine = vaccineId;
-      if (status) filter.status = status;
+      // Apply additional filters with validation
+      if (childId) {
+        if (!childId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid child ID format', 400);
+        }
+        filter.child = childId;
+      }
+      
+      if (vaccineId) {
+        if (!vaccineId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid vaccine ID format', 400);
+        }
+        filter.vaccine = vaccineId;
+      }
+      
+      if (status && Object.values(VACCINATION_STATUS).includes(status)) {
+        filter.status = status;
+      }
       
       if (startDate && endDate) {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          throw new AppError('Invalid date format', 400);
+        }
+        
+        if (start > end) {
+          throw new AppError('Start date cannot be after end date', 400);
+        }
+        
         filter.scheduledDate = {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate)
+          $gte: start,
+          $lte: end
         };
       }
 
@@ -65,8 +94,8 @@ class VaccinationRecordController {
 
       const result = await paginateResults(
         query,
-        parseInt(page),
-        parseInt(limit),
+        pageNum,
+        limitNum,
         sortBy,
         sortOrder
       );
@@ -82,22 +111,23 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Get vaccination records error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Get vaccination record by ID
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Get a specific vaccination record by ID
    */
-  async getVaccinationRecordById(req, res) {
+  async getVaccinationRecordById(req, res, next) {
     try {
       const { id } = req.params;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid vaccination record ID format', 400);
+      }
 
       const record = await VaccinationRecord.findById(id)
         .populate('child', 'firstName lastName dateOfBirth parent')
@@ -106,16 +136,12 @@ class VaccinationRecordController {
         .populate('completedBy', 'firstName lastName');
 
       if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND || 'Vaccination record not found', 404);
       }
 
       // Check permissions
-      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
+      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.CHILD_NOT_OWNED || 'Access denied', 403);
       }
 
       res.status(HTTP_STATUS.OK).json(
@@ -124,43 +150,50 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Get vaccination record by ID error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Create vaccination record
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Create a new vaccination record
    */
-  async createVaccinationRecord(req, res) {
+  async createVaccinationRecord(req, res, next) {
     try {
       const recordData = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate required fields
+      const requiredFields = ['child', 'vaccine', 'scheduledDate', 'doseNumber'];
+      const missingFields = requiredFields.filter(field => !recordData[field]);
+      
+      if (missingFields.length > 0) {
+        throw new AppError(`Missing required fields: ${missingFields.join(', ')}`, 400);
+      }
+
+      // Validate ObjectId formats
+      if (!recordData.child.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid child ID format', 400);
+      }
+      
+      if (!recordData.vaccine.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid vaccine ID format', 400);
+      }
 
       // Verify child exists and check permissions
       const child = await Child.findById(recordData.child);
       if (!child) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.CHILD_NOT_FOUND || 'Child not found', 404);
       }
 
-      if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
+      if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.CHILD_NOT_OWNED || 'Access denied', 403);
       }
 
       // Verify vaccine exists and is active
       const vaccine = await Vaccine.findById(recordData.vaccine);
       if (!vaccine || !vaccine.isActive) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, 'Vaccine not found or inactive')
-        );
+        throw new AppError('Vaccine not found or inactive', 404);
       }
 
       // Check for duplicate records
@@ -172,13 +205,18 @@ class VaccinationRecordController {
       });
 
       if (existingRecord) {
-        return res.status(HTTP_STATUS.CONFLICT).json(
-          createApiResponse(false, 'Duplicate vaccination record exists')
-        );
+        throw new AppError('Duplicate vaccination record exists', 409);
+      }
+
+      // Validate scheduled date
+      const scheduledDate = new Date(recordData.scheduledDate);
+      if (isNaN(scheduledDate.getTime())) {
+        throw new AppError('Invalid scheduled date format', 400);
       }
 
       const record = new VaccinationRecord({
         ...recordData,
+        scheduledDate,
         createdBy: userId,
         status: recordData.status || VACCINATION_STATUS.SCHEDULED
       });
@@ -199,50 +237,52 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Create vaccination record error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Update vaccination record
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Update a vaccination record
    */
-  async updateVaccinationRecord(req, res) {
+  async updateVaccinationRecord(req, res, next) {
     try {
       const { id } = req.params;
       const updates = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid vaccination record ID format', 400);
+      }
 
       const record = await VaccinationRecord.findById(id).populate('child');
       if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND || 'Vaccination record not found', 404);
       }
 
       // Check permissions
-      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
+      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.CHILD_NOT_OWNED || 'Access denied', 403);
       }
 
       // Prevent updating completed vaccinations
       if (record.status === VACCINATION_STATUS.COMPLETED) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, 'Cannot update completed vaccination records')
-        );
+        throw new AppError('Cannot update completed vaccination records', 403);
       }
 
       // Remove protected fields
-      delete updates.child;
-      delete updates.vaccine;
-      delete updates.createdBy;
-      delete updates.createdAt;
+      const protectedFields = ['child', 'vaccine', 'createdBy', 'createdAt'];
+      protectedFields.forEach(field => delete updates[field]);
+
+      // Validate scheduled date if provided
+      if (updates.scheduledDate) {
+        const scheduledDate = new Date(updates.scheduledDate);
+        if (isNaN(scheduledDate.getTime())) {
+          throw new AppError('Invalid scheduled date format', 400);
+        }
+        updates.scheduledDate = scheduledDate;
+      }
 
       const cleanedUpdates = removeEmptyFields(updates);
       cleanedUpdates.lastModifiedBy = userId;
@@ -257,7 +297,7 @@ class VaccinationRecordController {
         { path: 'vaccine', select: 'name type' }
       ]);
 
-      logger.info(`Vaccination record updated: ${id} by user ${req.user.email}`);
+      logger.info(`Vaccination record updated: ${id} by user ${req.user.email || userId}`);
 
       res.status(HTTP_STATUS.OK).json(
         createApiResponse(true, 'Vaccination record updated successfully', { record: updatedRecord })
@@ -265,18 +305,14 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Update vaccination record error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
    * Mark vaccination as completed
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
-  async markVaccinationCompleted(req, res) {
+  async markVaccinationCompleted(req, res, next) {
     try {
       const { id } = req.params;
       const { 
@@ -287,24 +323,34 @@ class VaccinationRecordController {
         sideEffects, 
         notes 
       } = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid vaccination record ID format', 400);
+      }
 
       const record = await VaccinationRecord.findById(id).populate('child vaccine');
       if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND || 'Vaccination record not found', 404);
       }
 
       if (record.status === VACCINATION_STATUS.COMPLETED) {
-        return res.status(HTTP_STATUS.CONFLICT).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_ALREADY_COMPLETED)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_ALREADY_COMPLETED || 'Vaccination already completed', 409);
+      }
+
+      // Validate administered date if provided
+      let adminDate = new Date();
+      if (administeredDate) {
+        adminDate = new Date(administeredDate);
+        if (isNaN(adminDate.getTime())) {
+          throw new AppError('Invalid administered date format', 400);
+        }
       }
 
       // Update record
       record.status = VACCINATION_STATUS.COMPLETED;
-      record.administeredDate = administeredDate ? new Date(administeredDate) : new Date();
+      record.administeredDate = adminDate;
       record.administeredBy = administeredBy;
       record.location = location;
       record.batchNumber = batchNumber;
@@ -323,48 +369,54 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Mark vaccination completed error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Reschedule vaccination
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Reschedule a vaccination
    */
-  async rescheduleVaccination(req, res) {
+  async rescheduleVaccination(req, res, next) {
     try {
       const { id } = req.params;
       const { newScheduledDate, reason, notes } = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid vaccination record ID format', 400);
+      }
+
+      // Validate required fields
+      if (!newScheduledDate) {
+        throw new AppError('New scheduled date is required', 400);
+      }
+
+      // Validate new date
+      const newDate = new Date(newScheduledDate);
+      if (isNaN(newDate.getTime())) {
+        throw new AppError('Invalid new scheduled date format', 400);
+      }
 
       const record = await VaccinationRecord.findById(id).populate('child');
       if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND || 'Vaccination record not found', 404);
       }
 
       // Check permissions
-      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
+      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.CHILD_NOT_OWNED || 'Access denied', 403);
       }
 
       if (record.status === VACCINATION_STATUS.COMPLETED) {
-        return res.status(HTTP_STATUS.CONFLICT).json(
-          createApiResponse(false, 'Cannot reschedule completed vaccinations')
-        );
+        throw new AppError('Cannot reschedule completed vaccinations', 403);
       }
 
       // Store reschedule history
       const rescheduleEntry = {
         oldDate: record.scheduledDate,
-        newDate: new Date(newScheduledDate),
+        newDate: newDate,
         reason,
         rescheduledBy: userId,
         rescheduledAt: new Date()
@@ -374,7 +426,7 @@ class VaccinationRecordController {
       record.rescheduleHistory.push(rescheduleEntry);
 
       // Update record
-      record.scheduledDate = new Date(newScheduledDate);
+      record.scheduledDate = newDate;
       record.status = VACCINATION_STATUS.SCHEDULED;
       record.notes = notes || record.notes;
       record.lastModifiedBy = userId;
@@ -390,42 +442,41 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Reschedule vaccination error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Cancel vaccination
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Cancel a vaccination
    */
-  async cancelVaccination(req, res) {
+  async cancelVaccination(req, res, next) {
     try {
       const { id } = req.params;
       const { reason } = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid vaccination record ID format', 400);
+      }
+
+      if (!reason) {
+        throw new AppError('Cancellation reason is required', 400);
+      }
 
       const record = await VaccinationRecord.findById(id).populate('child');
       if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND || 'Vaccination record not found', 404);
       }
 
       // Check permissions
-      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
+      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.CHILD_NOT_OWNED || 'Access denied', 403);
       }
 
       if (record.status === VACCINATION_STATUS.COMPLETED) {
-        return res.status(HTTP_STATUS.CONFLICT).json(
-          createApiResponse(false, 'Cannot cancel completed vaccinations')
-        );
+        throw new AppError('Cannot cancel completed vaccinations', 403);
       }
 
       // Update record
@@ -444,41 +495,47 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Cancel vaccination error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Get child vaccination records
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Get vaccination records for a specific child
    */
-  async getChildVaccinationRecords(req, res) {
+  async getChildVaccinationRecords(req, res, next) {
     try {
       const { childId } = req.params;
       const { status, vaccineId } = req.query;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
+
+      // Validate MongoDB ObjectId format
+      if (!childId.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid child ID format', 400);
+      }
 
       const child = await Child.findById(childId);
       if (!child) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.CHILD_NOT_FOUND || 'Child not found', 404);
       }
 
       // Check permissions
-      if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
+      if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId.toString()) {
+        throw new AppError(ERROR_MESSAGES.CHILD_NOT_OWNED || 'Access denied', 403);
       }
 
       let filter = { child: childId };
-      if (status) filter.status = status;
-      if (vaccineId) filter.vaccine = vaccineId;
+      
+      if (status && Object.values(VACCINATION_STATUS).includes(status)) {
+        filter.status = status;
+      }
+      
+      if (vaccineId) {
+        if (!vaccineId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid vaccine ID format', 400);
+        }
+        filter.vaccine = vaccineId;
+      }
 
       const records = await VaccinationRecord.find(filter)
         .populate('vaccine', 'name type manufacturer')
@@ -494,24 +551,22 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Get child vaccination records error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
    * Get upcoming vaccinations
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
-  async getUpcomingVaccinations(req, res) {
+  async getUpcomingVaccinations(req, res, next) {
     try {
       const { days = 30, childId } = req.query;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
-      const futureDate = new Date(Date.now() + (parseInt(days) * 24 * 60 * 60 * 1000));
+      // Validate and sanitize inputs
+      const daysNum = Math.min(365, Math.max(1, parseInt(days)));
+      const futureDate = new Date(Date.now() + (daysNum * 24 * 60 * 60 * 1000));
 
       let filter = {
         status: VACCINATION_STATUS.SCHEDULED,
@@ -528,6 +583,9 @@ class VaccinationRecordController {
       }
 
       if (childId) {
+        if (!childId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid child ID format', 400);
+        }
         filter.child = childId;
       }
 
@@ -540,30 +598,28 @@ class VaccinationRecordController {
         createApiResponse(true, 'Upcoming vaccinations retrieved successfully', {
           records,
           total: records.length,
-          daysAhead: parseInt(days)
+          daysAhead: daysNum
         })
       );
 
     } catch (error) {
       logger.error('Get upcoming vaccinations error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
    * Get overdue vaccinations
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
-  async getOverdueVaccinations(req, res) {
+  async getOverdueVaccinations(req, res, next) {
     try {
       const { childId, gracePeriod = 0 } = req.query;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
-      const overdueDate = new Date(Date.now() - (parseInt(gracePeriod) * 24 * 60 * 60 * 1000));
+      // Validate and sanitize inputs
+      const gracePeriodNum = Math.max(0, parseInt(gracePeriod));
+      const overdueDate = new Date(Date.now() - (gracePeriodNum * 24 * 60 * 60 * 1000));
 
       let filter = {
         status: { $in: [VACCINATION_STATUS.SCHEDULED, VACCINATION_STATUS.OVERDUE] },
@@ -577,6 +633,9 @@ class VaccinationRecordController {
       }
 
       if (childId) {
+        if (!childId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid child ID format', 400);
+        }
         filter.child = childId;
       }
 
@@ -595,40 +654,41 @@ class VaccinationRecordController {
         createApiResponse(true, 'Overdue vaccinations retrieved successfully', {
           records: recordsWithOverdueDays,
           total: recordsWithOverdueDays.length,
-          gracePeriod: parseInt(gracePeriod)
+          gracePeriod: gracePeriodNum
         })
       );
 
     } catch (error) {
       logger.error('Get overdue vaccinations error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
    * Mark vaccination as missed
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
-  async markVaccinationMissed(req, res) {
+  async markVaccinationMissed(req, res, next) {
     try {
       const { id } = req.params;
       const { reason, notes } = req.body;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid vaccination record ID format', 400);
+      }
+
+      if (!reason) {
+        throw new AppError('Reason for missing vaccination is required', 400);
+      }
 
       const record = await VaccinationRecord.findById(id).populate('child');
       if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND || 'Vaccination record not found', 404);
       }
 
       if (record.status === VACCINATION_STATUS.COMPLETED) {
-        return res.status(HTTP_STATUS.CONFLICT).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_ALREADY_COMPLETED)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_ALREADY_COMPLETED || 'Vaccination already completed', 409);
       }
 
       // Update record
@@ -648,38 +708,42 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Mark vaccination missed error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Delete vaccination record
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Delete a vaccination record (Admin only, non-completed records)
    */
-  async deleteVaccinationRecord(req, res) {
+  async deleteVaccinationRecord(req, res, next) {
     try {
       const { id } = req.params;
+      const userRole = req.user.role;
+      const userId = req.user._id || req.user.userId;
+
+      // Only admins can delete vaccination records
+      if (userRole !== USER_ROLES.ADMIN) {
+        throw new AppError(ERROR_MESSAGES.ACCESS_DENIED || 'Access denied', 403);
+      }
+
+      // Validate MongoDB ObjectId format
+      if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+        throw new AppError('Invalid vaccination record ID format', 400);
+      }
 
       const record = await VaccinationRecord.findById(id);
       if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
+        throw new AppError(ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND || 'Vaccination record not found', 404);
       }
 
       // Don't delete completed vaccinations
       if (record.status === VACCINATION_STATUS.COMPLETED) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, 'Cannot delete completed vaccination records')
-        );
+        throw new AppError('Cannot delete completed vaccination records', 403);
       }
 
       await VaccinationRecord.findByIdAndDelete(id);
 
-      logger.info(`Vaccination record deleted: ${id} by admin ${req.user.email}`);
+      logger.info(`Vaccination record deleted: ${id} by admin ${req.user.email || userId}`);
 
       res.status(HTTP_STATUS.OK).json(
         createApiResponse(true, 'Vaccination record deleted successfully')
@@ -687,42 +751,42 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Delete vaccination record error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
    * Get vaccination statistics
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
-  async getVaccinationStatistics(req, res) {
+  async getVaccinationStatistics(req, res, next) {
     try {
       const { childId, parentId, startDate, endDate } = req.query;
-      const userId = req.user.userId;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
       // Build filter based on permissions
       let filter = {};
 
       if (childId) {
-        const child = await Child.findById(childId);
-        if (!child) {
-          return res.status(HTTP_STATUS.NOT_FOUND).json(
-            createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_FOUND)
-          );
+        if (!childId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid child ID format', 400);
         }
 
-        if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId) {
-          return res.status(HTTP_STATUS.FORBIDDEN).json(
-            createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-          );
+        const child = await Child.findById(childId);
+        if (!child) {
+          throw new AppError(ERROR_MESSAGES.CHILD_NOT_FOUND || 'Child not found', 404);
+        }
+
+        if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId.toString()) {
+          throw new AppError(ERROR_MESSAGES.CHILD_NOT_OWNED || 'Access denied', 403);
         }
 
         filter.child = childId;
       } else if (parentId && (userRole === USER_ROLES.ADMIN || userRole === USER_ROLES.DOCTOR)) {
+        if (!parentId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid parent ID format', 400);
+        }
+        
         const children = await Child.find({ parent: parentId }).select('_id');
         filter.child = { $in: children.map(child => child._id) };
       } else if (userRole === USER_ROLES.PARENT) {
@@ -730,10 +794,22 @@ class VaccinationRecordController {
         filter.child = { $in: children.map(child => child._id) };
       }
 
+      // Validate date range
       if (startDate && endDate) {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          throw new AppError('Invalid date format', 400);
+        }
+        
+        if (start > end) {
+          throw new AppError('Start date cannot be after end date', 400);
+        }
+        
         filter.scheduledDate = {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate)
+          $gte: start,
+          $lte: end
         };
       }
 
@@ -791,26 +867,126 @@ class VaccinationRecordController {
             count: { $sum: 1 }
           }
         },
-        { $sort: { '_id.year': 1, '_id.month': 1 } }
+        {
+          $sort: { '_id.year': 1, '_id.month': 1 }
+        }
       ]);
+
+      // Get age group statistics
+      const ageGroupStats = await VaccinationRecord.aggregate([
+        { $match: filter },
+        {
+          $lookup: {
+            from: 'children',
+            localField: 'child',
+            foreignField: '_id',
+            as: 'childInfo'
+          }
+        },
+        { $unwind: '$childInfo' },
+        {
+          $addFields: {
+            ageInMonths: {
+              $divide: [
+                { $subtract: [new Date(), '$childInfo.dateOfBirth'] },
+                1000 * 60 * 60 * 24 * 30.44 // Approximate days per month
+              ]
+            }
+          }
+        },
+        {
+          $addFields: {
+            ageGroup: {
+              $switch: {
+                branches: [
+                  { case: { $lt: ['$ageInMonths', 2] }, then: '0-2 months' },
+                  { case: { $lt: ['$ageInMonths', 6] }, then: '2-6 months' },
+                  { case: { $lt: ['$ageInMonths', 12] }, then: '6-12 months' },
+                  { case: { $lt: ['$ageInMonths', 24] }, then: '1-2 years' },
+                  { case: { $lt: ['$ageInMonths', 60] }, then: '2-5 years' },
+                  { case: { $gte: ['$ageInMonths', 60] }, then: '5+ years' }
+                ],
+                default: 'Unknown'
+              }
+            }
+          }
+        },
+        {
+          $group: {
+            _id: '$ageGroup',
+            total: { $sum: 1 },
+            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+            scheduled: { $sum: { $cond: [{ $eq: ['$status', 'scheduled'] }, 1, 0] } },
+            overdue: { $sum: { $cond: [{ $eq: ['$status', 'overdue'] }, 1, 0] } }
+          }
+        },
+        { $sort: { '_id': 1 } }
+      ]);
+
+      // Get completion rate by vaccine type
+      const completionRateByVaccine = await VaccinationRecord.aggregate([
+        { $match: filter },
+        {
+          $lookup: {
+            from: 'vaccines',
+            localField: 'vaccine',
+            foreignField: '_id',
+            as: 'vaccineInfo'
+          }
+        },
+        { $unwind: '$vaccineInfo' },
+        {
+          $group: {
+            _id: '$vaccineInfo.type',
+            total: { $sum: 1 },
+            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } }
+          }
+        },
+        {
+          $addFields: {
+            completionRate: {
+              $cond: [
+                { $eq: ['$total', 0] },
+                0,
+                { $multiply: [{ $divide: ['$completed', '$total'] }, 100] }
+              ]
+            }
+          }
+        },
+        { $sort: { completionRate: -1 } }
+      ]);
+
+      // Get overall statistics
+      const totalRecords = await VaccinationRecord.countDocuments(filter);
+      const completedCount = await VaccinationRecord.countDocuments({
+        ...filter,
+        status: VACCINATION_STATUS.COMPLETED
+      });
+      const scheduledCount = await VaccinationRecord.countDocuments({
+        ...filter,
+        status: VACCINATION_STATUS.SCHEDULED
+      });
+      const overdueCount = await VaccinationRecord.countDocuments({
+        ...filter,
+        status: VACCINATION_STATUS.OVERDUE,
+        scheduledDate: { $lt: new Date() }
+      });
+
+      const overallCompletionRate = totalRecords > 0 ? (completedCount / totalRecords) * 100 : 0;
 
       const statistics = {
         overview: {
-          total: statusStats.reduce((sum, stat) => sum + stat.count, 0),
-          byStatus: statusStats.reduce((acc, stat) => {
-            acc[stat._id] = stat.count;
-            return acc;
-          }, {}),
-          completionRate: statusStats.length > 0 ? 
-            Math.round(((statusStats.find(s => s._id === 'completed')?.count || 0) / 
-                       statusStats.reduce((sum, stat) => sum + stat.count, 0)) * 100) : 0
+          totalRecords,
+          completedCount,
+          scheduledCount,
+          overdueCount,
+          overallCompletionRate: parseFloat(overallCompletionRate.toFixed(2))
         },
-        topVaccines: vaccineStats,
+        statusBreakdown: statusStats,
+        vaccineStats,
         monthlyTrends,
-        dateRange: {
-          startDate: startDate || 'All time',
-          endDate: endDate || 'Present'
-        }
+        ageGroupStats,
+        completionRateByVaccine
       };
 
       res.status(HTTP_STATUS.OK).json(
@@ -819,684 +995,269 @@ class VaccinationRecordController {
 
     } catch (error) {
       logger.error('Get vaccination statistics error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      next(error);
     }
   }
 
   /**
-   * Get vaccination calendar for specific month
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Get vaccination reminders
    */
-  async getVaccinationCalendar(req, res) {
+  async getVaccinationReminders(req, res, next) {
     try {
-      const { year, month } = req.params;
-      const { childId } = req.query;
-      const userId = req.user.userId;
+      const { childId, days = 7 } = req.query;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
-      // Build date range for the month
-      const startDate = new Date(parseInt(year), parseInt(month) - 1, 1);
-      const endDate = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59, 999);
+      // Validate and sanitize inputs
+      const daysNum = Math.min(30, Math.max(1, parseInt(days)));
+      const reminderDate = new Date(Date.now() + (daysNum * 24 * 60 * 60 * 1000));
 
       let filter = {
+        status: VACCINATION_STATUS.SCHEDULED,
         scheduledDate: {
-          $gte: startDate,
-          $lte: endDate
+          $gte: new Date(),
+          $lte: reminderDate
         }
       };
 
-      if (childId) {
-        const child = await Child.findById(childId);
-        if (!child) {
-          return res.status(HTTP_STATUS.NOT_FOUND).json(
-            createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_FOUND)
-          );
-        }
-
-        if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId) {
-          return res.status(HTTP_STATUS.FORBIDDEN).json(
-            createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-          );
-        }
-
-        filter.child = childId;
-      } else if (userRole === USER_ROLES.PARENT) {
+      // Apply permission filtering
+      if (userRole === USER_ROLES.PARENT) {
         const children = await Child.find({ parent: userId }).select('_id');
         filter.child = { $in: children.map(child => child._id) };
       }
 
-      const calendarData = await VaccinationRecord.find(filter)
-        .populate('child', 'firstName lastName')
-        .populate('vaccine', 'name type')
+      if (childId) {
+        if (!childId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid child ID format', 400);
+        }
+        filter.child = childId;
+      }
+
+      const reminders = await VaccinationRecord.find(filter)
+        .populate('child', 'firstName lastName dateOfBirth parent')
+        .populate('vaccine', 'name type manufacturer')
         .sort({ scheduledDate: 1 });
 
-      // Group by date
-      const groupedByDate = calendarData.reduce((acc, record) => {
-        const dateKey = record.scheduledDate.toISOString().split('T')[0];
-        if (!acc[dateKey]) {
-          acc[dateKey] = [];
-        }
-        acc[dateKey].push({
-          _id: record._id,
-          child: record.child,
-          vaccine: record.vaccine,
-          status: record.status,
-          doseNumber: record.doseNumber,
-          scheduledTime: record.scheduledDate.toISOString()
-        });
-        return acc;
-      }, {});
+      // Calculate days until vaccination for each reminder
+      const remindersWithDays = reminders.map(reminder => {
+        const daysUntil = Math.ceil((reminder.scheduledDate - new Date()) / (1000 * 60 * 60 * 24));
+        return {
+          ...reminder.toObject(),
+          daysUntil: Math.max(0, daysUntil)
+        };
+      });
 
       res.status(HTTP_STATUS.OK).json(
-        createApiResponse(
-          true,
-          'Vaccination calendar retrieved successfully',
-          {
-            year: parseInt(year),
-            month: parseInt(month),
-            calendarData: groupedByDate,
-            totalRecords: calendarData.length
-          }
-        )
-      );
-
-    } catch (error) {
-      logger.error('Get vaccination calendar error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
-    }
-  }
-
-  /**
-   * Bulk schedule vaccinations
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async bulkScheduleVaccinations(req, res) {
-    try {
-      const { childId, vaccinations } = req.body;
-      const userId = req.user.userId;
-      const userRole = req.user.role;
-
-      // Verify child
-      const child = await Child.findById(childId);
-      if (!child) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_FOUND)
-        );
-      }
-
-      if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
-      }
-
-      const results = [];
-      const errors = [];
-
-      for (let i = 0; i < vaccinations.length; i++) {
-        try {
-          const vaccinationData = {
-            ...vaccinations[i],
-            child: childId,
-            status: VACCINATION_STATUS.SCHEDULED,
-            createdBy: userId
-          };
-
-          // Check if vaccine exists
-          const vaccine = await Vaccine.findById(vaccinationData.vaccine);
-          if (!vaccine || !vaccine.isActive) {
-            errors.push({
-              index: i,
-              error: 'Vaccine not found or inactive'
-            });
-            continue;
-          }
-
-          // Check for duplicates
-          const existingRecord = await VaccinationRecord.findOne({
-            child: childId,
-            vaccine: vaccinationData.vaccine,
-            doseNumber: vaccinationData.doseNumber,
-            scheduledDate: {
-              $gte: new Date(vaccinationData.scheduledDate).setHours(0, 0, 0, 0),
-              $lt: new Date(vaccinationData.scheduledDate).setHours(23, 59, 59, 999)
-            }
-          });
-
-          if (existingRecord) {
-            errors.push({
-              index: i,
-              error: 'Duplicate vaccination record'
-            });
-            continue;
-          }
-
-          const record = new VaccinationRecord(vaccinationData);
-          await record.save();
-          await record.populate([
-            { path: 'vaccine', select: 'name type' }
-          ]);
-
-          results.push(record);
-
-        } catch (error) {
-          errors.push({
-            index: i,
-            error: error.message
-          });
-        }
-      }
-
-      logger.info(`Bulk vaccination scheduling: ${results.length} successful, ${errors.length} failed`);
-
-      res.status(HTTP_STATUS.OK).json(
-        createApiResponse(
-          true,
-          `Bulk scheduling completed: ${results.length} successful, ${errors.length} failed`,
-          {
-            successful: results,
-            errors,
-            totalProcessed: vaccinations.length,
-            successCount: results.length,
-            errorCount: errors.length
-          }
-        )
-      );
-
-    } catch (error) {
-      logger.error('Bulk schedule vaccinations error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
-    }
-  }
-
-  /**
-   * Add side effects to completed vaccination
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async addSideEffects(req, res) {
-    try {
-      const { id } = req.params;
-      const { sideEffects, severity, notes, reportedDate } = req.body;
-      const userId = req.user.userId;
-      const userRole = req.user.role;
-
-      const record = await VaccinationRecord.findById(id).populate('child');
-      if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
-      }
-
-      // Check permissions
-      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
-      }
-
-      if (record.status !== VACCINATION_STATUS.COMPLETED) {
-        return res.status(HTTP_STATUS.BAD_REQUEST).json(
-          createApiResponse(false, 'Can only add side effects to completed vaccinations')
-        );
-      }
-
-      // Add side effects data
-      const sideEffectEntry = {
-        effects: sideEffects,
-        severity: severity || 'mild',
-        notes,
-        reportedDate: reportedDate ? new Date(reportedDate) : new Date(),
-        reportedBy: userId
-      };
-
-      record.sideEffectsReports = record.sideEffectsReports || [];
-      record.sideEffectsReports.push(sideEffectEntry);
-
-      // Update main sideEffects array
-      const newEffects = sideEffects.filter(effect => !record.sideEffects.includes(effect));
-      record.sideEffects.push(...newEffects);
-
-      await record.save();
-
-      logger.info(`Side effects added to vaccination record: ${id}`);
-
-      res.status(HTTP_STATUS.OK).json(
-        createApiResponse(true, 'Side effects added successfully', { 
-          record,
-          addedEffects: sideEffectEntry
+        createApiResponse(true, 'Vaccination reminders retrieved successfully', {
+          reminders: remindersWithDays,
+          total: remindersWithDays.length,
+          daysAhead: daysNum
         })
       );
 
     } catch (error) {
-      logger.error('Add side effects error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      logger.error('Get vaccination reminders error:', error);
+      next(error);
     }
   }
 
   /**
-   * Export child vaccination records
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Bulk update vaccination status (Admin/Doctor only)
    */
-  async exportChildVaccinationRecords(req, res) {
+  async bulkUpdateVaccinationStatus(req, res, next) {
     try {
-      const { childId } = req.params;
-      const { format = 'json', includeCompleted = true, includeScheduled = true } = req.query;
-      const userId = req.user.userId;
+      const { recordIds, status, reason } = req.body;
+      const userId = req.user._id || req.user.userId;
       const userRole = req.user.role;
 
-      const child = await Child.findById(childId);
-      if (!child) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_FOUND)
-        );
+      // Only admins and doctors can perform bulk operations
+      if (userRole !== USER_ROLES.ADMIN && userRole !== USER_ROLES.DOCTOR) {
+        throw new AppError('Access denied. Admin or Doctor role required.', 403);
       }
 
-      if (userRole === USER_ROLES.PARENT && child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
+      // Validate required fields
+      if (!recordIds || !Array.isArray(recordIds) || recordIds.length === 0) {
+        throw new AppError('Record IDs array is required', 400);
       }
 
-      let statusFilter = [];
-      if (includeCompleted === 'true') statusFilter.push(VACCINATION_STATUS.COMPLETED);
-      if (includeScheduled === 'true') statusFilter.push(VACCINATION_STATUS.SCHEDULED);
-
-      const records = await VaccinationRecord.find({
-        child: childId,
-        status: { $in: statusFilter }
-      })
-      .populate('vaccine', 'name type manufacturer')
-      .sort({ scheduledDate: 1 });
-
-      if (format === 'csv') {
-        const csv = this.convertRecordsToCSV(records, child);
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="${child.firstName}_${child.lastName}_vaccinations.csv"`);
-        return res.send(csv);
+      if (!status || !Object.values(VACCINATION_STATUS).includes(status)) {
+        throw new AppError('Valid status is required', 400);
       }
 
-      res.status(HTTP_STATUS.OK).json(
-        createApiResponse(
-          true,
-          'Vaccination records exported successfully',
-          {
-            child: {
-              _id: child._id,
-              name: `${child.firstName} ${child.lastName}`,
-              dateOfBirth: child.dateOfBirth
-            },
-            records,
-            total: records.length,
-            exportedAt: new Date()
-          }
-        )
-      );
-
-    } catch (error) {
-      logger.error('Export child vaccination records error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
-    }
-  }
-
-  /**
-   * Convert vaccination records to CSV format
-   * @private
-   * @param {Array} records - Vaccination records
-   * @param {Object} child - Child object
-   * @returns {String} CSV string
-   */
-  convertRecordsToCSV(records, child) {
-    const headers = [
-      'Child Name', 'Date of Birth', 'Vaccine Name', 'Vaccine Type', 'Dose Number',
-      'Scheduled Date', 'Status', 'Administered Date', 'Administered By', 'Location',
-      'Batch Number', 'Side Effects', 'Notes'
-    ];
-
-    const rows = records.map(record => [
-      `${child.firstName} ${child.lastName}`,
-      child.dateOfBirth.toISOString().split('T')[0],
-      record.vaccine.name,
-      record.vaccine.type,
-      record.doseNumber,
-      record.scheduledDate.toISOString().split('T')[0],
-      record.status,
-      record.administeredDate ? record.administeredDate.toISOString().split('T')[0] : '',
-      record.administeredBy || '',
-      record.location || '',
-      record.batchNumber || '',
-      record.sideEffects ? record.sideEffects.join('; ') : '',
-      record.notes || ''
-    ]);
-
-    const csvContent = [headers, ...rows]
-      .map(row => row.map(field => `"${field}"`).join(','))
-      .join('\n');
-
-    return csvContent;
-  }
-
-  /**
-   * Get vaccination record history/audit trail
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getVaccinationRecordHistory(req, res) {
-    try {
-      const { id } = req.params;
-      const userId = req.user.userId;
-      const userRole = req.user.role;
-
-      const record = await VaccinationRecord.findById(id)
-        .populate('child')
-        .populate('createdBy', 'firstName lastName')
-        .populate('lastModifiedBy', 'firstName lastName')
-        .populate('completedBy', 'firstName lastName');
-
-      if (!record) {
-        return res.status(HTTP_STATUS.NOT_FOUND).json(
-          createApiResponse(false, ERROR_MESSAGES.VACCINATION_RECORD_NOT_FOUND)
-        );
+      // Validate ObjectId formats
+      const invalidIds = recordIds.filter(id => !id.match(/^[0-9a-fA-F]{24}$/));
+      if (invalidIds.length > 0) {
+        throw new AppError(`Invalid record ID formats: ${invalidIds.join(', ')}`, 400);
       }
 
-      if (userRole === USER_ROLES.PARENT && record.child.parent.toString() !== userId) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json(
-          createApiResponse(false, ERROR_MESSAGES.CHILD_NOT_OWNED)
-        );
+      // Limit bulk operation size
+      if (recordIds.length > 100) {
+        throw new AppError('Maximum 100 records can be updated at once', 400);
       }
 
-      const history = {
-        recordId: record._id,
-        currentStatus: record.status,
-        createdBy: record.createdBy,
-        createdAt: record.createdAt,
-        lastModifiedBy: record.lastModifiedBy,
-        lastModifiedAt: record.lastModifiedAt,
-        completedBy: record.completedBy,
-        completedAt: record.completedAt,
-        rescheduleHistory: record.rescheduleHistory || [],
-        sideEffectsReports: record.sideEffectsReports || []
+      // Find records to update
+      const records = await VaccinationRecord.find({ _id: { $in: recordIds } });
+      if (records.length !== recordIds.length) {
+        throw new AppError('Some vaccination records not found', 404);
+      }
+
+      // Check if any records are completed (cannot be updated)
+      const completedRecords = records.filter(record => record.status === VACCINATION_STATUS.COMPLETED);
+      if (completedRecords.length > 0 && status !== VACCINATION_STATUS.COMPLETED) {
+        throw new AppError('Cannot update completed vaccination records', 403);
+      }
+
+      // Prepare update data
+      const updateData = {
+        status,
+        lastModifiedBy: userId,
+        lastModifiedAt: new Date()
       };
 
-      res.status(HTTP_STATUS.OK).json(
-        createApiResponse(true, 'Vaccination record history retrieved successfully', { history })
-      );
-
-    } catch (error) {
-      logger.error('Get vaccination record history error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
-    }
-  }
-
-  /**
-   * Batch update vaccination record statuses
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async batchUpdateStatus(req, res) {
-    try {
-      const { recordIds, status, reason, notes } = req.body;
-      const userId = req.user.userId;
-
-      const results = [];
-      const errors = [];
-
-      for (const recordId of recordIds) {
-        try {
-          const record = await VaccinationRecord.findById(recordId);
-          if (!record) {
-            errors.push({ recordId, error: 'Record not found' });
-            continue;
-          }
-
-          if (record.status === VACCINATION_STATUS.COMPLETED && status !== VACCINATION_STATUS.COMPLETED) {
-            errors.push({ recordId, error: 'Cannot change status of completed vaccination' });
-            continue;
-          }
-
-          const oldStatus = record.status;
-          record.status = status;
-          record.lastModifiedBy = userId;
-          record.lastModifiedAt = new Date();
-
-          if (reason) {
-            switch (status) {
-              case VACCINATION_STATUS.CANCELLED:
-                record.cancellationReason = reason;
-                record.cancelledBy = userId;
-                record.cancelledAt = new Date();
-                break;
-              case VACCINATION_STATUS.MISSED:
-                record.missedReason = reason;
-                record.missedBy = userId;
-                record.missedAt = new Date();
-                break;
-            }
-          }
-
-          if (notes) {
-            record.notes = notes;
-          }
-
-          await record.save();
-          results.push({ recordId, oldStatus, newStatus: status });
-
-        } catch (error) {
-          errors.push({ recordId, error: error.message });
-        }
+      // Add specific fields based on status
+      if (status === VACCINATION_STATUS.CANCELLED && reason) {
+        updateData.cancellationReason = reason;
+        updateData.cancelledBy = userId;
+        updateData.cancelledAt = new Date();
+      } else if (status === VACCINATION_STATUS.MISSED && reason) {
+        updateData.missedReason = reason;
+        updateData.missedBy = userId;
+        updateData.missedAt = new Date();
       }
 
-      logger.info(`Batch status update: ${results.length} successful, ${errors.length} failed`);
+      // Perform bulk update
+      const result = await VaccinationRecord.updateMany(
+        { _id: { $in: recordIds } },
+        { $set: updateData }
+      );
+
+      logger.info(`Bulk update performed: ${result.modifiedCount} records updated to ${status} by ${req.user.email || userId}`);
 
       res.status(HTTP_STATUS.OK).json(
-        createApiResponse(
-          true,
-          `Batch update completed: ${results.length} successful, ${errors.length} failed`,
-          {
-            successful: results,
-            errors,
-            totalProcessed: recordIds.length
-          }
-        )
+        createApiResponse(true, `Successfully updated ${result.modifiedCount} vaccination records`, {
+          updatedCount: result.modifiedCount,
+          status,
+          recordIds
+        })
       );
 
     } catch (error) {
-      logger.error('Batch update status error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      logger.error('Bulk update vaccination status error:', error);
+      next(error);
     }
   }
 
   /**
-   * Generate vaccination reminders
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
+   * Export vaccination records (Admin/Doctor only)
    */
-  async generateReminders(req, res) {
+  async exportVaccinationRecords(req, res, next) {
     try {
-      const { type, daysAhead = 7, childId, deliveryMethods } = req.body;
+      const { format = 'csv', childId, status, startDate, endDate } = req.query;
+      const userId = req.user._id || req.user.userId;
+      const userRole = req.user.role;
 
+      // Only admins and doctors can export data
+      if (userRole !== USER_ROLES.ADMIN && userRole !== USER_ROLES.DOCTOR) {
+        throw new AppError('Access denied. Admin or Doctor role required.', 403);
+      }
+
+      // Validate format
+      if (!['csv', 'json'].includes(format)) {
+        throw new AppError('Invalid export format. Use csv or json.', 400);
+      }
+
+      // Build filter
       let filter = {};
 
-      if (type === 'upcoming') {
-        const futureDate = new Date(Date.now() + (daysAhead * 24 * 60 * 60 * 1000));
-        filter = {
-          status: VACCINATION_STATUS.SCHEDULED,
-          scheduledDate: {
-            $gte: new Date(),
-            $lte: futureDate
-          }
-        };
-      } else if (type === 'overdue') {
-        filter = {
-          status: { $in: [VACCINATION_STATUS.SCHEDULED, VACCINATION_STATUS.OVERDUE] },
-          scheduledDate: { $lt: new Date() }
-        };
-      }
-
       if (childId) {
+        if (!childId.match(/^[0-9a-fA-F]{24}$/)) {
+          throw new AppError('Invalid child ID format', 400);
+        }
         filter.child = childId;
       }
 
-      const records = await VaccinationRecord.find(filter)
-        .populate('child')
-        .populate('vaccine', 'name');
-
-      const reminderResults = [];
-
-      for (const record of records) {
-        try {
-          let notification;
-          if (type === 'upcoming') {
-            notification = await notificationService.createVaccinationReminder(record._id, daysAhead);
-          } else if (type === 'overdue') {
-            notification = await notificationService.createOverdueNotification(record._id);
-          }
-
-          if (notification) {
-            await notificationService.sendNotification(notification._id);
-            reminderResults.push({
-              recordId: record._id,
-              childName: `${record.child.firstName} ${record.child.lastName}`,
-              vaccineName: record.vaccine.name,
-              success: true
-            });
-          }
-
-        } catch (error) {
-          reminderResults.push({
-            recordId: record._id,
-            success: false,
-            error: error.message
-          });
-        }
-      }
-
-      const successCount = reminderResults.filter(r => r.success).length;
-
-      res.status(HTTP_STATUS.OK).json(
-        createApiResponse(
-          true,
-          `Reminders generated: ${successCount}/${reminderResults.length} successful`,
-          {
-            results: reminderResults,
-            totalProcessed: reminderResults.length,
-            successCount,
-            type,
-            daysAhead
-          }
-        )
-      );
-
-    } catch (error) {
-      logger.error('Generate reminders error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
-    }
-  }
-
-  /**
-   * Get compliance report
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getComplianceReport(req, res) {
-    try {
-      const { startDate, endDate, ageGroup, vaccineId } = req.query;
-
-      let childFilter = {};
-      let recordFilter = {};
-
-      // Age group filter
-      if (ageGroup) {
-        const [minAge, maxAge] = ageGroup.split('-').map(Number);
-        const now = new Date();
-        const minDate = new Date(now.getFullYear() - maxAge, now.getMonth(), now.getDate());
-        const maxDate = new Date(now.getFullYear() - minAge, now.getMonth(), now.getDate());
-        
-        childFilter.dateOfBirth = { $gte: minDate, $lte: maxDate };
-      }
-
-      if (vaccineId) {
-        recordFilter.vaccine = vaccineId;
+      if (status && Object.values(VACCINATION_STATUS).includes(status)) {
+        filter.status = status;
       }
 
       if (startDate && endDate) {
-        recordFilter.scheduledDate = {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate)
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          throw new AppError('Invalid date format', 400);
+        }
+        
+        if (start > end) {
+          throw new AppError('Start date cannot be after end date', 400);
+        }
+        
+        filter.scheduledDate = {
+          $gte: start,
+          $lte: end
         };
       }
 
-      // Get children matching criteria
-      const children = await Child.find(childFilter);
-      const childIds = children.map(child => child._id);
-      recordFilter.child = { $in: childIds };
+      // Get records with populated data
+      const records = await VaccinationRecord.find(filter)
+        .populate('child', 'firstName lastName dateOfBirth')
+        .populate('vaccine', 'name type manufacturer')
+        .populate('createdBy', 'firstName lastName')
+        .populate('completedBy', 'firstName lastName')
+        .sort({ scheduledDate: 1 })
+        .lean();
 
-      // Get compliance statistics
-      const complianceStats = await VaccinationRecord.aggregate([
-        { $match: recordFilter },
-        {
-          $group: {
-            _id: '$status',
-            count: { $sum: 1 }
+      // Transform data for export
+      const exportData = records.map(record => ({
+        recordId: record._id,
+        childName: `${record.child.firstName} ${record.child.lastName}`,
+        childDateOfBirth: record.child.dateOfBirth,
+        vaccineName: record.vaccine.name,
+        vaccineType: record.vaccine.type,
+        vaccineManufacturer: record.vaccine.manufacturer,
+        doseNumber: record.doseNumber,
+        scheduledDate: record.scheduledDate,
+        administeredDate: record.administeredDate || null,
+        status: record.status,
+        location: record.location || null,
+        administeredBy: record.administeredBy || null,
+        batchNumber: record.batchNumber || null,
+        sideEffects: record.sideEffects ? record.sideEffects.join(', ') : null,
+        notes: record.notes || null,
+        createdBy: record.createdBy ? `${record.createdBy.firstName} ${record.createdBy.lastName}` : null,
+        createdAt: record.createdAt,
+        completedBy: record.completedBy ? `${record.completedBy.firstName} ${record.completedBy.lastName}` : null,
+        completedAt: record.completedAt || null
+      }));
+
+      if (format === 'json') {
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename=vaccination_records_${Date.now()}.json`);
+        res.status(HTTP_STATUS.OK).json({
+          exportDate: new Date().toISOString(),
+          totalRecords: exportData.length,
+          data: exportData
+        });
+      } else {
+        // CSV format
+        const csv = require('csv-stringify');
+        
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=vaccination_records_${Date.now()}.csv`);
+        
+        csv.stringify(exportData, { header: true }, (err, output) => {
+          if (err) {
+            throw new AppError('Error generating CSV export', 500);
           }
-        }
-      ]);
+          res.status(HTTP_STATUS.OK).send(output);
+        });
+      }
 
-      // Calculate compliance rate
-      const totalRecords = complianceStats.reduce((sum, stat) => sum + stat.count, 0);
-      const completedCount = complianceStats.find(s => s._id === 'completed')?.count || 0;
-      const complianceRate = totalRecords > 0 ? Math.round((completedCount / totalRecords) * 100) : 0;
-
-      const report = {
-        reportGenerated: new Date(),
-        filters: {
-          startDate: startDate || 'All time',
-          endDate: endDate || 'Present',
-          ageGroup: ageGroup || 'All ages',
-          vaccineId: vaccineId || 'All vaccines'
-        },
-        summary: {
-          totalChildren: children.length,
-          totalRecords,
-          complianceRate,
-          statusBreakdown: complianceStats.reduce((acc, stat) => {
-            acc[stat._id] = {
-              count: stat.count,
-              percentage: Math.round((stat.count / totalRecords) * 100)
-            };
-            return acc;
-          }, {})
-        }
-      };
-
-      res.status(HTTP_STATUS.OK).json(
-        createApiResponse(true, 'Compliance report generated successfully', { report })
-      );
+      logger.info(`Vaccination records exported: ${exportData.length} records in ${format} format by ${req.user.email || userId}`);
 
     } catch (error) {
-      logger.error('Get compliance report error:', error);
-      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json(
-        createApiResponse(false, ERROR_MESSAGES.INTERNAL_ERROR)
-      );
+      logger.error('Export vaccination records error:', error);
+      next(error);
     }
   }
 }

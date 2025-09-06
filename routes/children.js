@@ -2,8 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const childController = require('../controllers/childController');
-const auth = require('../middleware/auth');
-const { requireRole } = require('../middleware/auth');
+const { auth, requireRole } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
 const { childSchema, childUpdateSchema, paginationSchema } = require('../utils/validators');
 const { USER_ROLES, FILE_UPLOAD, GENDER_OPTIONS } = require('../utils/constants');
@@ -175,7 +174,7 @@ router.get(
 router.get(
   '/export',
   auth,
-  requireRole([USER_ROLES.ADMIN, USER_ROLES.DOCTOR]),
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.DOCTOR),
   validateRequest({
     query: {
       format: {
@@ -347,7 +346,7 @@ router.post(
   childController.uploadChildImage
 );
 
-// Error handling middleware for multer
+// FIXED: Error handling middleware for multer - correct function signature
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
@@ -364,7 +363,7 @@ router.use((error, req, res, next) => {
     }
   }
   
-  if (error.message.includes('Invalid file type')) {
+  if (error.message && error.message.includes('Invalid file type')) {
     return res.status(400).json({
       success: false,
       message: error.message

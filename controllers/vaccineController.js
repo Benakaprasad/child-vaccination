@@ -17,12 +17,13 @@ const {
 const logger = require('../utils/logger');
 
 class VaccineController {
-  /**
-   * Get all vaccines with filtering and pagination
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getAllVaccines(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async getAllVaccines(req, res, next) {
     try {
       const { 
         page = 1, 
@@ -85,12 +86,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Get vaccine by ID
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getVaccineById(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async getVaccineById(req, res, next) {
     try {
       const { id } = req.params;
 
@@ -135,11 +137,12 @@ class VaccineController {
   }
 
   /**
-   * Create a new vaccine
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async createVaccine(req, res) {
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async createVaccine(req, res, next) {
     try {
       const vaccineData = req.body;
 
@@ -180,12 +183,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Update vaccine
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async updateVaccine(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async updateVaccine(req, res, next) {
     try {
       const { id } = req.params;
       const updates = req.body;
@@ -238,12 +242,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Delete vaccine (Admin only)
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async deleteVaccine(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async deleteVaccine(req, res, next) {
     try {
       const { id } = req.params;
 
@@ -286,12 +291,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Toggle vaccine active status
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async toggleVaccineStatus(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async toggleVaccineStatus(req, res, next) {
     try {
       const { id } = req.params;
       const { isActive } = req.body;
@@ -329,12 +335,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Search vaccines
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async searchVaccines(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async searchVaccines(req, res, next) {
     try {
       const { 
         q, 
@@ -383,12 +390,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Get vaccines by type
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getVaccinesByType(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async getVaccinesByType(req, res, next) {
     try {
       const { isActive = true } = req.query;
 
@@ -437,12 +445,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Get vaccine manufacturers
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getManufacturers(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async getManufacturers(req, res, next) {
     try {
       const manufacturers = await Vaccine.distinct('manufacturer', { isActive: true });
       
@@ -460,12 +469,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Get recommended vaccines for specific age
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getVaccinesForAge(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async getVaccinesForAge(req, res, next) {
     try {
       const { childAge } = req.params;
       const { unit = 'months' } = req.query;
@@ -537,12 +547,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Get vaccine statistics
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getVaccineStatistics(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async getVaccineStatistics(req, res, next) {
     try {
       // Get general statistics
       const totalVaccines = await Vaccine.countDocuments();
@@ -615,12 +626,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Get detailed vaccine schedule information
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getVaccineScheduleInfo(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async getVaccineScheduleInfo(req, res, next) {
     try {
       const { id } = req.params;
 
@@ -676,12 +688,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Bulk create vaccines
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async bulkCreateVaccines(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async bulkCreateVaccines(req, res, next) {
     try {
       const { vaccines } = req.body;
 
@@ -743,12 +756,13 @@ class VaccineController {
     }
   }
 
-  /**
-   * Get vaccine usage statistics
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getVaccineUsageStatistics(req, res) {
+   /**
+ * Register a new user
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+  async getVaccineUsageStatistics(req, res, next) {
     try {
       const { id } = req.params;
       const { startDate, endDate } = req.query;
