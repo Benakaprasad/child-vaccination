@@ -1,8 +1,8 @@
 const { body, param, query, validationResult } = require('express-validator');
 const { AppError } = require('./errorHandler');
 
-// Validation result handler
-const handleValidationErrors = (req, res, next) => {
+// Validation result handler - FIX: This should be named validateRequest for compatibility
+const validateRequest = (req, res, next) => {
   const errors = validationResult(req);
   
   if (!errors.isEmpty()) {
@@ -21,6 +21,9 @@ const handleValidationErrors = (req, res, next) => {
   
   next();
 };
+
+// Keep the original name for backward compatibility
+const handleValidationErrors = validateRequest;
 
 // User validation rules
 const validateUserRegistration = [
@@ -53,7 +56,7 @@ const validateUserRegistration = [
     .isMobilePhone()
     .withMessage('Please provide a valid phone number'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 const validateUserLogin = [
@@ -67,7 +70,7 @@ const validateUserLogin = [
     .notEmpty()
     .withMessage('Password is required'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 const validateUserUpdate = [
@@ -111,7 +114,7 @@ const validateUserUpdate = [
     .isInt({ min: 1, max: 30 })
     .withMessage('Reminder days must be between 1 and 30'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 // Child validation rules
@@ -170,7 +173,7 @@ const validateChild = [
     .isLength({ min: 1, max: 100 })
     .withMessage('Each allergy must be between 1 and 100 characters'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 // Vaccine validation rules
@@ -208,7 +211,7 @@ const validateVaccine = [
     .isArray()
     .withMessage('Side effects must be an array'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 // Vaccination record validation rules
@@ -246,7 +249,7 @@ const validateVaccinationRecord = [
     .isLength({ max: 500 })
     .withMessage('Notes cannot exceed 500 characters'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 const validateVaccinationRecordUpdate = [
@@ -287,7 +290,7 @@ const validateVaccinationRecordUpdate = [
     .isIn(['mild', 'moderate', 'severe'])
     .withMessage('Invalid reaction severity'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 // Parameter validation
@@ -296,7 +299,7 @@ const validateMongoId = (paramName) => [
     .isMongoId()
     .withMessage(`Invalid ${paramName} format`),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 // Query validation
@@ -316,7 +319,7 @@ const validatePagination = [
     .isIn(['createdAt', '-createdAt', 'name', '-name', 'dob', '-dob', 'scheduledDate', '-scheduledDate'])
     .withMessage('Invalid sort parameter'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 const validateDateRange = [
@@ -336,7 +339,7 @@ const validateDateRange = [
       return true;
     }),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 // Notification validation
@@ -368,7 +371,7 @@ const validateNotification = [
     .isIn(['low', 'medium', 'high', 'urgent'])
     .withMessage('Invalid priority level'),
   
-  handleValidationErrors
+  validateRequest
 ];
 
 // File upload validation
@@ -402,6 +405,7 @@ const validateFileUpload = (req, res, next) => {
 };
 
 module.exports = {
+  validateRequest, // FIX: Export this for server.js compatibility
   handleValidationErrors,
   validateUserRegistration,
   validateUserLogin,

@@ -1,77 +1,339 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const morgan = require('morgan');
-const compression = require('compression');
-const cron = require('node-cron');
-const path = require('path');
+console.log('=== SERVER STARTUP DEBUG ===');
+console.log('1. Starting server initialization...');
+
+// Load environment variables first
+console.log('2. Loading environment variables...');
 require('dotenv').config();
+console.log('3. Environment loaded, NODE_ENV:', process.env.NODE_ENV);
+
+// Core dependencies
+console.log('4. Loading core dependencies...');
+const express = require('express');
+console.log('   ✓ Express loaded');
+const mongoose = require('mongoose');
+console.log('   ✓ Mongoose loaded');
+const cors = require('cors');
+console.log('   ✓ CORS loaded');
+const helmet = require('helmet');
+console.log('   ✓ Helmet loaded');
+const rateLimit = require('express-rate-limit');
+console.log('   ✓ Rate limit loaded');
+const path = require('path');
+console.log('   ✓ Path loaded');
+
+// Optional dependencies with error handling
+console.log('5. Loading optional dependencies...');
+let morgan, compression, cron;
+
+try {
+  morgan = require('morgan');
+  console.log('   ✓ Morgan loaded');
+} catch (err) {
+  console.log('   ✗ Morgan failed:', err.message);
+}
+
+try {
+  compression = require('compression');
+  console.log('   ✓ Compression loaded');
+} catch (err) {
+  console.log('   ✗ Compression failed:', err.message);
+}
+
+try {
+  cron = require('node-cron');
+  console.log('   ✓ Node-cron loaded');
+} catch (err) {
+  console.log('   ✗ Node-cron failed:', err.message);
+}
 
 const app = express();
+console.log('6. Express app created');
 
-// Import middlewares
-const { AppError, asyncHandler } = require('./middleware/errorHandler');
-const auth = require('./middleware/auth');
-const { validateRequest } = require('./middleware/validation');
+// Import custom modules with error handling
+console.log('7. Loading custom middleware...');
 
-// Import utils
-const logger = require('./utils/logger');
-const { USER_ROLES } = require('./utils/constants');
-const validators = require('./utils/validators');
-const helpers = require('./utils/helpers');
+let errorHandler, loggerModule, auth, validateRequest;
 
-// Import models
-const User = require('./models/User');
-const Child = require('./models/Child');
-const Vaccine = require('./models/Vaccine');
-const VaccinationRecord = require('./models/VaccinationRecord');
-const Notification = require('./models/Notification');
+try {
+  const errorHandlerModule = require('./middleware/errorHandler');
+  errorHandler = errorHandlerModule.errorHandler;
+  console.log('   ✓ Error handler loaded');
+} catch (err) {
+  console.log('   ✗ Error handler failed:', err.message);
+  errorHandler = (err, req, res, next) => {
+    console.error('Error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  };
+}
 
-// Import controllers
-const authController = require('./controllers/authController');
-const userController = require('./controllers/userController');
-const childController = require('./controllers/childController');
-const vaccineController = require('./controllers/vaccineController');
-const vaccinationRecordController = require('./controllers/vaccinationRecordController');
-const notificationController = require('./controllers/notificationController');
+try {
+  // FIX: Import the entire logger module first
+  loggerModule = require('./utils/logger');
+  console.log('   ✓ Logger loaded');
+} catch (err) {
+  console.log('   ✗ Logger failed:', err.message);
+  loggerModule = {
+    logger: {
+      info: (msg, meta) => console.log('INFO:', msg),
+      error: (msg, meta) => console.error('ERROR:', msg),
+      warn: (msg, meta) => console.warn('WARN:', msg)
+    }
+  };
+}
 
-// Import services
-const notificationService = require('./services/notificationService');
-const emailService = require('./services/emailService');
-const smsService = require('./services/smsService');
-const vaccinationScheduler = require('./services/vaccinationScheduler');
+// Extract logger from module
+const logger = loggerModule.logger || loggerModule;
 
-// Import routes
-const authRoutes = require('./routes/auth');
-const userRoutes = require('./routes/users');
-const childrenRoutes = require('./routes/children');
-const vaccineRoutes = require('./routes/vaccines');
-const vaccinationRecordRoutes = require('./routes/vaccinationRecords');
-const notificationRoutes = require('./routes/notifications');
+try {
+  auth = require('./middleware/auth');
+  console.log('   ✓ Auth middleware loaded');
+} catch (err) {
+  console.log('   ✗ Auth middleware failed:', err.message);
+}
+
+try {
+  // FIX: Import validateRequest correctly
+  const validationModule = require('./middleware/validation');
+  validateRequest = validationModule.validateRequest || validationModule.handleValidationErrors;
+  console.log('   ✓ Validation middleware loaded');
+} catch (err) {
+  console.log('   ✗ Validation middleware failed:', err.message);
+}
+
+// Import utils with error handling
+console.log('8. Loading utilities...');
+
+let USER_ROLES, validators, helpers;
+
+try {
+  const constants = require('./utils/constants');
+  USER_ROLES = constants.USER_ROLES;
+  console.log('   ✓ Constants loaded');
+} catch (err) {
+  console.log('   ✗ Constants failed:', err.message);
+}
+
+try {
+  validators = require('./utils/validators');
+  console.log('   ✓ Validators loaded');
+} catch (err) {
+  console.log('   ✗ Validators failed:', err.message);
+}
+
+try {
+  helpers = require('./utils/helpers');
+  console.log('   ✓ Helpers loaded');
+} catch (err) {
+  console.log('   ✗ Helpers failed:', err.message);
+}
+
+// Import models with error handling
+console.log('9. Loading models...');
+
+let User, Child, Vaccine, VaccinationRecord, Notification;
+
+try {
+  User = require('./models/User');
+  console.log('   ✓ User model loaded');
+} catch (err) {
+  console.log('   ✗ User model failed:', err.message);
+}
+
+try {
+  Child = require('./models/Child');
+  console.log('   ✓ Child model loaded');
+} catch (err) {
+  console.log('   ✗ Child model failed:', err.message);
+}
+
+try {
+  Vaccine = require('./models/Vaccine');
+  console.log('   ✓ Vaccine model loaded');
+} catch (err) {
+  console.log('   ✗ Vaccine model failed:', err.message);
+}
+
+try {
+  // FIX: Clear any cached model before requiring
+  delete require.cache[require.resolve('./models/VaccinationRecord')];
+  VaccinationRecord = require('./models/VaccinationRecord');
+  console.log('   ✓ VaccinationRecord model loaded');
+} catch (err) {
+  console.log('   ✗ VaccinationRecord model failed:', err.message);
+}
+
+try {
+  Notification = require('./models/Notification');
+  console.log('   ✓ Notification model loaded');
+} catch (err) {
+  console.log('   ✗ Notification model failed:', err.message);
+}
+
+// Import controllers with error handling
+console.log('10. Loading controllers...');
+
+let authController, userController, childController, vaccineController, vaccinationRecordController, notificationController;
+
+try {
+  authController = require('./controllers/authController');
+  console.log('   ✓ Auth controller loaded');
+} catch (err) {
+  console.log('   ✗ Auth controller failed:', err.message);
+}
+
+try {
+  userController = require('./controllers/userController');
+  console.log('   ✓ User controller loaded');
+} catch (err) {
+  console.log('   ✗ User controller failed:', err.message);
+}
+
+try {
+  childController = require('./controllers/childController');
+  console.log('   ✓ Child controller loaded');
+} catch (err) {
+  console.log('   ✗ Child controller failed:', err.message);
+}
+
+try {
+  vaccineController = require('./controllers/vaccineController');
+  console.log('   ✓ Vaccine controller loaded');
+} catch (err) {
+  console.log('   ✗ Vaccine controller failed:', err.message);
+}
+
+try {
+  vaccinationRecordController = require('./controllers/vaccinationRecordController');
+  console.log('   ✓ VaccinationRecord controller loaded');
+} catch (err) {
+  console.log('   ✗ VaccinationRecord controller failed:', err.message);
+}
+
+try {
+  notificationController = require('./controllers/notificationController');
+  console.log('   ✓ Notification controller loaded');
+} catch (err) {
+  console.log('   ✗ Notification controller failed:', err.message);
+}
+
+// Import services with error handling
+console.log('11. Loading services...');
+
+let notificationService, emailService, smsService, vaccinationScheduler;
+
+try {
+  notificationService = require('./services/notificationService');
+  console.log('   ✓ Notification service loaded');
+} catch (err) {
+  console.log('   ✗ Notification service failed:', err.message);
+  notificationService = {
+    checkAndSendReminders: () => console.log('Notification service placeholder - checkAndSendReminders'),
+    createOverdueNotifications: () => console.log('Notification service placeholder - createOverdueNotifications')
+  };
+}
+
+try {
+  emailService = require('./services/emailService');
+  console.log('   ✓ Email service loaded');
+} catch (err) {
+  console.log('   ✗ Email service failed:', err.message);
+}
+
+try {
+  smsService = require('./services/smsService');
+  console.log('   ✓ SMS service loaded');
+} catch (err) {
+  console.log('   ✗ SMS service failed:', err.message);
+}
+
+try {
+  vaccinationScheduler = require('./services/vaccinationScheduler');
+  console.log('   ✓ Vaccination scheduler loaded');
+} catch (err) {
+  console.log('   ✗ Vaccination scheduler failed:', err.message);
+}
+
+// Import routes with error handling
+console.log('12. Loading routes...');
+
+let authRoutes, userRoutes, childrenRoutes, vaccineRoutes, vaccinationRecordRoutes, notificationRoutes;
+
+try {
+  authRoutes = require('./routes/auth');
+  console.log('   ✓ Auth routes loaded');
+} catch (err) {
+  console.log('   ✗ Auth routes failed:', err.message);
+}
+
+try {
+  userRoutes = require('./routes/users');
+  console.log('   ✓ User routes loaded');
+} catch (err) {
+  console.log('   ✗ User routes failed:', err.message);
+}
+
+try {
+  childrenRoutes = require('./routes/children');
+  console.log('   ✓ Children routes loaded');
+} catch (err) {
+  console.log('   ✗ Children routes failed:', err.message);
+}
+
+try {
+  vaccineRoutes = require('./routes/vaccines');
+  console.log('   ✓ Vaccine routes loaded');
+} catch (err) {
+  console.log('   ✗ Vaccine routes failed:', err.message);
+}
+
+try {
+  vaccinationRecordRoutes = require('./routes/vaccinationRecords');
+  console.log('   ✓ Vaccination record routes loaded');
+} catch (err) {
+  console.log('   ✗ Vaccination record routes failed:', err.message);
+}
+
+try {
+  notificationRoutes = require('./routes/notifications');
+  console.log('   ✓ Notification routes loaded');
+} catch (err) {
+  console.log('   ✗ Notification routes failed:', err.message);
+}
+
+console.log('13. Setting up middleware...');
 
 // Security middleware
 app.use(helmet());
+console.log('   ✓ Helmet configured');
+
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
+console.log('   ✓ CORS configured');
 
-// Compression middleware
-app.use(compression());
+// Optional middleware
+if (compression) {
+  app.use(compression());
+  console.log('   ✓ Compression enabled');
+}
 
-// Logging middleware
-app.use(morgan('combined', { 
-  stream: { 
-    write: message => logger.info(message.trim()) 
-  } 
-}));
+// FIX: Better morgan integration with proper logger stream
+if (morgan && logger) {
+  const loggerStream = {
+    write: function(message) {
+      // Remove trailing newline and log
+      logger.info(message.trim());
+    }
+  };
+  app.use(morgan('combined', { stream: loggerStream }));
+  console.log('   ✓ Morgan logging enabled');
+}
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again later.',
@@ -79,35 +341,34 @@ const limiter = rateLimit({
   }
 });
 app.use(limiter);
+console.log('   ✓ Rate limiting configured');
 
-// Body parsing middleware
+// Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+console.log('   ✓ Body parsing configured');
 
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+console.log('   ✓ Static files configured');
 
-// MongoDB connection
+console.log('14. Connecting to MongoDB...');
+console.log('   Connection string:', process.env.MONGODB_URI || 'mongodb://localhost:27017/child_vaccination');
+
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/child_vaccination')
 .then(() => {
   logger.info('Connected to MongoDB');
-  console.log('Connected to MongoDB');
+  console.log('   ✓ MongoDB connected successfully');
 })
 .catch(err => {
   logger.error('MongoDB connection error:', err);
-  console.error('MongoDB connection error:', err);
-  process.exit(1);
+  console.log('   ✗ MongoDB connection failed:', err.message);
+  console.log('   Note: Server will continue without database connection');
 });
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/children', childrenRoutes);
-app.use('/api/vaccines', vaccineRoutes);
-app.use('/api/vaccination-records', vaccinationRecordRoutes);
-app.use('/api/notifications', notificationRoutes);
+console.log('15. Setting up routes...');
 
-// Health check endpoint
+// Health check endpoint (define early)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -117,6 +378,7 @@ app.get('/api/health', (req, res) => {
     version: '1.0.0'
   });
 });
+console.log('   ✓ Health check route configured');
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -136,44 +398,97 @@ app.get('/', (req, res) => {
     }
   });
 });
+console.log('   ✓ Root endpoint configured');
 
-// Schedule notification check every hour
-cron.schedule('0 * * * *', () => {
-  logger.info('Running scheduled notification check...');
-  console.log('Running scheduled notification check...');
-  try {
-    notificationService.checkAndSendReminders();
-  } catch (error) {
-    logger.error('Error in scheduled notification check:', error);
-  }
-});
+// Routes (only if they loaded successfully)
+if (authRoutes) {
+  app.use('/api/auth', authRoutes);
+  console.log('   ✓ Auth routes mounted');
+}
 
-// Schedule overdue vaccination check daily at 9 AM
-cron.schedule('0 9 * * *', () => {
-  logger.info('Running overdue vaccination check...');
-  console.log('Running overdue vaccination check...');
+if (userRoutes) {
+  app.use('/api/users', userRoutes);
+  console.log('   ✓ User routes mounted');
+}
+
+if (childrenRoutes) {
+  app.use('/api/children', childrenRoutes);
+  console.log('   ✓ Children routes mounted');
+}
+
+if (vaccineRoutes) {
+  app.use('/api/vaccines', vaccineRoutes);
+  console.log('   ✓ Vaccine routes mounted');
+}
+
+if (vaccinationRecordRoutes) {
+  app.use('/api/vaccination-records', vaccinationRecordRoutes);
+  console.log('   ✓ Vaccination record routes mounted');
+}
+
+if (notificationRoutes) {
+  app.use('/api/notifications', notificationRoutes);
+  console.log('   ✓ Notification routes mounted');
+}
+
+// Schedule cron jobs if cron is available
+if (cron && notificationService) {
+  console.log('16. Setting up cron jobs...');
+  
   try {
-    notificationService.createOverdueNotifications();
-  } catch (error) {
-    logger.error('Error in overdue vaccination check:', error);
+    cron.schedule('0 * * * *', () => {
+      logger.info('Running scheduled notification check...');
+      console.log('Running scheduled notification check...');
+      try {
+        notificationService.checkAndSendReminders();
+      } catch (error) {
+        logger.error('Error in scheduled notification check:', error);
+      }
+    });
+    console.log('   ✓ Hourly notification check scheduled');
+  } catch (err) {
+    console.log('   ✗ Failed to schedule hourly notifications:', err.message);
   }
-});
+
+  try {
+    cron.schedule('0 9 * * *', () => {
+      logger.info('Running overdue vaccination check...');
+      console.log('Running overdue vaccination check...');
+      try {
+        notificationService.createOverdueNotifications();
+      } catch (error) {
+        logger.error('Error in overdue vaccination check:', error);
+      }
+    });
+    console.log('   ✓ Daily overdue check scheduled');
+  } catch (err) {
+    console.log('   ✗ Failed to schedule daily overdue check:', err.message);
+  }
+} else {
+  console.log('16. Cron jobs skipped (cron or notification service not available)');
+}
 
 // Graceful shutdown handling
+console.log('17. Setting up graceful shutdown...');
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
+  console.log('SIGTERM received, shutting down gracefully');
   mongoose.connection.close();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
+  console.log('SIGINT received, shutting down gracefully');
   mongoose.connection.close();
   process.exit(0);
 });
 
 // Error handling middleware
-app.use(errorHandler);
+if (errorHandler) {
+  app.use(errorHandler);
+  console.log('   ✓ Error handler configured');
+}
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -184,11 +499,16 @@ app.use('*', (req, res) => {
     method: req.method
   });
 });
+console.log('   ✓ 404 handler configured');
 
+console.log('18. Starting server...');
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
+  console.log('=== SERVER STARTED SUCCESSFULLY ===');
   logger.info(`Server running on port ${PORT}`);
   console.log(`Child Vaccination API running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Access API at: http://localhost:${PORT}`);
+  console.log('=====================================');
 });

@@ -55,3 +55,35 @@ build/
 # Temporary folders
 tmp/
 temp/
+# Database Configuration
+MONGODB_URI=mongodb://localhost:27017/child_vaccination
+
+# Server Configuration
+PORT=3000
+NODE_ENV=development
+
+# JWT Secret (use a strong secret key)
+JWT_SECRET=your-super-secret-jwt-key-here-make-it-long-and-random
+JWT_EXPIRE=30d
+
+# Frontend URL (for CORS)
+FRONTEND_URL=http://localhost:3000
+
+# Email Configuration (if using email notifications)
+EMAIL_FROM=your-email@example.com
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
+
+# SMS Configuration (if using Twilio)
+TWILIO_ACCOUNT_SID=your-twilio-account-sid
+TWILIO_AUTH_TOKEN=your-twilio-auth-token
+TWILIO_PHONE_NUMBER=+1234567890
+
+# File Upload Configuration
+MAX_FILE_SIZE=5242880
+UPLOAD_PATH=./uploads
+
+# Logging
+LOG_LEVEL=info
