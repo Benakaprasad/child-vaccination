@@ -12,7 +12,7 @@ require('dotenv').config();
 const app = express();
 
 // Import middlewares
-const errorHandler = require('./middleware/errorHandler');
+const { errorHandler } = require('./middleware/errorHandler');
 const auth = require('./middleware/auth');
 const { validateRequest } = require('./middleware/validation');
 
